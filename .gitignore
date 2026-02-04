@@ -1,0 +1,8 @@
+# Claude Code
+.claude/
+
+# GrepAI index files
+.grepai/
+
+# OpenSpec
+openspec/

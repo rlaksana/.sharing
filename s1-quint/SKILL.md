@@ -1,253 +1,235 @@
 ---
 name: s1-quint
-description: Orchestrates the complete First Principles Framework (FPF) reasoning cycle from Q0 to Q5 using available tools.
-disable-model-invocation: false
+description: Orchestrates FPF reasoning cycle (Q0-Q5). Terminates with user decision.
 input: <problem_statement>
 allowed-tools:
-  - Bash
-  - Read
-  - Edit
-  - Write
-  - Grep
-  - Glob
-  - TodoWrite
+  - SlashCommand
+  - quint_status
+  - quint_init
+  - quint_record_context
+  - quint_propose
+  - quint_verify
+  - quint_test
+  - quint_audit
+  - quint_calculate_r
+  - quint_decide
+  - quint_actualize
+  - quint_check_decay
+  - quint_audit_tree
 ---
 
-# Quint Orchestrator (Auto-Chain Q0-Q5)
+# S1-Quint: FPF Reasoning Cycle
 
 > **Prerequisite:** Load `shared-core.md` for term definitions ($STDS, $BASE, Surgical_Scope, AntiRot).
 
 **Problem:** $ARGUMENTS
 
-> **CRITICAL: REASONING ONLY.** 
-> This skill is for ARCHITECTURE & DECISION MAKING. 
-> Writing application code (src files) is **STRICTLY FORBIDDEN**. 
-> You must HANDOFF to `s2-openspec` for implementation.
-
-Execute FPF cycle sequentially. Use `quint_*` MCP tools to register state changes at each phase.
-
 **System:** Windows + PowerShell (`pwsh`) for all Bash commands.
 
-> **RESUMPTION RULE:** If the user interrupts with feedback or new requirements:
-> 1.  **DO NOT EXIT** the protocol.
-> 2.  **ASSESS** the impact on current hypotheses.
-> 3.  **LOOPBACK** to the relevant Phase (e.g., Q1 for new ideas, Q3 for test changes).
-> 4.  **CONTINUE** sequentially from that point.
-> 5.  **NEVER** switch to direct coding. Use `quint_status` to re-orient.
+---
 
-> **FAILURE RULE:**
-> - If `quint_verify` fails → **LOOPBACK** to Q1 (Refine/New Hypothesis).
-> - If `quint_test` fails → **LOOPBACK** to Q3 (Refine Plan).
-> - **ANTI-FALLBACK:** Error != Exit. If a tool fails, YOU ARE STILL IN THE PROTOCOL.
->   - **DO NOT** switch to manual coding.
->   - **DO NOT** skip the failed step.
->   - **RETRY** the tool or ask the user for help while staying in the protocol.
-> - **MAX RETRIES:** 3. After 3 failures, **STOP** and ask User for guidance.
+## CRITICAL: MCP Tools vs Skills
+
+| Type | Invocation | Example |
+|------|------------|---------|
+| **MCP Tools** | Call directly | `quint_status`, `quint_propose` |
+| **Skills** | `/skill-name` or auto-loaded | `/s2-openspec` |
+
+> ❌ **WRONG:** `Skill(quint_status)` — will fail
+> ✅ **CORRECT:** Call `quint_status` as MCP tool
 
 ---
 
 ## MCP Tools (quint-code)
 
-| Tool                   | Purpose                      |
-| ---------------------- | ---------------------------- |
-| `quint_init`           | Initialize FPF structure     |
-| `quint_record_context` | Record bounded context       |
-| `quint_status`         | Get current phase            |
-| `quint_propose`        | Register L0 hypothesis       |
-| `quint_verify`         | Logic verification (L0→L1)   |
-| `quint_test`           | Empirical validation (L1→L2) |
-| `quint_audit`          | Risk analysis                |
-| `quint_calculate_r`    | Compute R_eff                |
-| `quint_decide`         | Finalize decision            |
+| Tool                   | Purpose                           |
+| ---------------------- | --------------------------------- |
+| `quint_init`           | Initialize FPF structure          |
+| `quint_record_context` | Record bounded context            |
+| `quint_status`         | Get current phase                 |
+| `quint_propose`        | Register L0 hypothesis            |
+| `quint_verify`         | Logic verification (L0→L1)        |
+| `quint_test`           | Empirical validation (L1→L2)      |
+| `quint_audit`          | Risk analysis                     |
+| `quint_calculate_r`    | Compute R_eff                     |
+| `quint_audit_tree`     | Visualize assurance tree          |
+| `quint_check_decay`    | Check evidence freshness          |
+| `quint_actualize`      | Sync FPF state with repo changes  |
+| `quint_decide`         | Record DRR (Q5 only)              |
 
 ---
 
 ## Phase 0: Initialize & Research (Q0)
 
-### 0.1 Initialize
-
 1. `quint_status` — check if FPF initialized
 2. `quint_init` — if not, set up `.quint/`
-
-### 0.2 Record Context & Bind Standards ($STDS)
-
-1. `quint_record_context` — capture vocabulary and invariants
-2. **Bind $STDS:** Per shared-core.md definitions
-
-### 0.3 Research
-
-- **External:** `es_search_files` / `es_search_in_path` (Fastest)
-- **Understanding:** `grepai_search` (Concepts) or `read`
-- **Deep Dive:** `serena_find_symbol` / `serena_get_symbols_overview`
-- **Online Verification:** (MANDATORY) `web-search-prime` / `zread` to prevent hallucination. Verify versions/syntax.
-
-**Output:** Key constraints and context summary.
+3. `quint_record_context` — capture vocabulary and invariants
+4. Research: `es_search_files`, `grepai_search`, `serena_find_symbol`
+5. Online verification (MANDATORY): `web-search-prime` / `zread`
 
 ---
 
-## Phase 1: Abduction (Q1 - PROPOSE)
+## Phase 1: Abduction (Q1)
 
-**MAX ATTEMPTS:** 3 cycles. Stop and report if 3rd failure.
+Generate 3 hypotheses:
+1. **[Naive]**: Simplest solution
+2. **[Standard]**: Best practice
+3. **[Lateral]**: Out-of-box
 
-### 1.1 Establish Baseline ($BASE)
-
-Define the **obvious, minimal solution** without optimization.
-
-- This is the benchmark for measuring hypothesis value-add.
-- Example: "Just add a simple if-check" or "Query database directly"
-
-### 1.3 Brainstorm (Archetypal Divergence)
-
-Generate exactly 3 hypotheses using these archetypes:
-
-1.  **[Naive]**: The simplest, "dumbest" solution. Minimizes code. Benchmark for complexity.
-2.  **[Standard]**: The robust, "best practice" engineering solution. Clean architecture.
-3.  **[Lateral]**: The "Out-of-Box" solution. Reframes the problem or uses a different paradigm.
-
-- Each MUST justify why it's better than $BASE
-- Adhere to $STDS from Phase 0
-
-### 1.3 Register
-
-Use `quint_propose` to register hypotheses.
+Register with `quint_propose`.
 
 ---
 
-## Phase 2: Deduction (Q2 - VERIFY)
+## Phase 2: Deduction (Q2)
 
-### 2.1 Status Check
-
-`quint_status` before proceeding.
-
-### 2.2 Logic Verification
-
-For each hypothesis:
-
-- **Disprove mandate:** Assume it's wrong, find contradictions
+- Try to disprove each hypothesis
 - Check SOLID/DRY violations
-- Check for regressions
+- `quint_verify` — mark PASS/FAIL
 
-### 2.3 Change Audit (Req + Unreq)
-
-Does this hypothesis:
-- `[REQ]` **Traceability:** Solve *every* specific constraint in $ARGUMENT?
-- `[UNREQ]` **Anti-Rot:** Contain NO "while I was here" refactoring?
-- `[UNREQ]` **Scope:** Stay strictly within the bounded context?
-
-### 2.4 Register
-
-`quint_verify` — mark each as `PASS` or `FAIL`.
-
-### 2.5 Loopback
-
-If ALL fail → return to Phase 1. Analyze WHY. New hypotheses must be fundamentally different.
+If ALL fail → return to Phase 1.
 
 ---
 
-## Phase 3: Induction (Q3 - TEST)
-
-### 3.1 Status Check
-
-`quint_status` before proceeding.
-
-### 3.2 Validation
+## Phase 3: Induction (Q3)
 
 - Deep read implementation files
-- Pseudo-code proofs
-- Propose test strategies (E2E/Integration/Unit)
+- Propose test strategies
+- `quint_test` — promote valid to L2
 
-### 3.3 Register
-
-`quint_test` — promote valid hypotheses to L2.
-
-### 3.4 Loopback
-
-If none at L2 → return to Phase 1. State learning in next hypothesis rationale.
+If none at L2 → return to Phase 1.
 
 ---
 
-## Phase 4: Audit (Q4 - AUDIT)
+## Phase 4: Audit (Q4)
 
-### 4.1 Status Check
-
-`quint_status` before proceeding.
-
-### 4.2 Risk & ROI Analysis
-
-For remaining solutions, calculate:
-1.  **R_eff**: Reliability score (0-1).
-2.  **Effort**: Est. complexity (Low/Med/High) or 1-5 scale.
-3.  **ROI**: `R_eff / Effort` (High reliability at low effort wins).
-
+- Calculate R_eff, Effort, ROI for each
 - Identify Weakest Link
-- Consider maintenance, complexity, performance
-
-### 4.3 Register
-
-`quint_audit` and `quint_calculate_r`.
+- `quint_audit` + `quint_calculate_r`
 
 ---
 
-## Phase 5: Decision (Q5 - DECIDE)
+## Phase 5: Decision (Q5) — MANDATORY USER GATE
 
-### 5.1 Status Check
+> ⛔ **CRITICAL:** This phase REQUIRES explicit user approval. DO NOT auto-proceed.
 
-`quint_status` before proceeding.
+### 5.1 Present Recommendation
 
-### 5.2 Compare
+| Hypothesis | R_eff | Effort | ROI | Recommendation |
+|------------|-------|--------|-----|----------------|
+| ...        | ...   | ...    | ... | ...            |
 
-Create Markdown table:
+### 5.2 Ask for Confirmation
 
-- Pros/Cons
-- R_eff Score
-- Alignment with Project Goals
+```
+🔒 DECISION REQUIRED
 
-### 5.3 Recommend
+Recommendation: [hypothesis-name]
+Rationale: [brief why]
 
-State recommended hypothesis and why.
+Options:
+  yes     → Record DRR, proceed to implementation
+  no      → Provide feedback, return to relevant phase
+  comment → Adjust recommendation based on your input
 
-### 5.4 FRICTION Gate (Pre-Finalize)
+Your decision: ___
+```
 
-Before finalizing, verify:
+### 5.3 STOP — Wait for User Response
 
-- ✓ Winner complies with ALL $STDS from Phase 0
-- ✓ Winner solves original problem (not a different one)
-- ✓ Winner is better than $BASE with clear justification
+> ⛔ **MANDATORY STOP**
+> 
+> DO NOT proceed until user explicitly responds.
+> DO NOT assume "yes" if no response.
+> DO NOT auto-continue after presenting options.
 
-If friction detected → return to Phase 4 (max 1 re-evaluation).
+**Flow:**
+- User says **"yes"** → Proceed to 5.4
+- User says **"no"** → Ask what to change, return to Phase 1-4
+- User says **"comment: [text]"** → Adjust, re-present 5.2
 
-### 5.5 MANDATORY STOP: User Decision Gate
+### 5.4 Record Decision (ONLY after explicit "yes")
 
-> **🛑 ABSOLUTE STOP — TRANSFORMER MANDATE**
-> Humans decide; agents document. This gate is **NON-BYPASSABLE**.
+```
+PRECONDITION: User has explicitly said "yes" or equivalent approval.
+```
 
-1.  **PRESENT:** Show comparison table with recommendation to USER.
-2.  **ASK:** "Please confirm which hypothesis to proceed with, or provide alternative direction."
-3.  **WAIT:** Do NOT proceed until user explicitly approves or redirects.
-4.  **NO AUTO-PROCEED:** Even if you are "confident", you MUST wait.
+Call `quint_decide` with:
+- `winner_id`: approved hypothesis
+- `rationale`: why chosen
+- `consequences`: expected impact
 
-**Violation of this gate = Protocol Failure.**
+## Phase 6: Handoff to S2
 
-### 5.6 Finalize (POST-APPROVAL ONLY)
+> ⛔ **CRITICAL: DO NOT SKIP THIS PHASE**
+> 
+> You MUST invoke s2-openspec. DO NOT go directly to code editing.
+> Using `serena_*`, `Edit`, or `Write` tools is FORBIDDEN until s2-openspec completes.
 
-> Only execute this step AFTER receiving explicit user approval.
+### 6.1 Verify DRR Exists (MUST DO)
 
-1.  Record decision: `quint_decide`
-2.  Confirm DRR-ID is generated.
+Check for DRR file in `.quint/decisions/`:
+- If exists → Proceed to 6.2
+- If not → ERROR. Return to Phase 5.
 
-### 5.7 Handoff to Implementation
+### 6.2 Invoke S2-OpenSpec (MUST DO)
 
-> Execute ONLY after 5.6 is complete (user approved + quint_decide done).
+**Invoke skill with DRR ID:**
+```
+/s2-openspec <drr-id>
+```
 
-1.  **CHECK:** Verify you have the Winner DRR-ID.
-2.  **HANDOFF:**
-    - **LOAD:** `view_file c:/Users/Richard/.claude/skills/s2-openspec/SKILL.md`
-    - **EXECUTE:** Start `s2-openspec` protocol using the DRR-ID.
-3.  **TERMINATE:** This skill is done. Next steps governed by `s2-openspec`.
+S2 handles all implementation details. Wait for completion.
 
+### 6.3 Confirm Completion
+
+When s2-openspec returns success → Q6 complete.
+
+---
+
+## Anti-Bypass Rules
+
+| Violation | Consequence |
+|-----------|-------------|
+| Using `serena_*`/`Edit`/`Write` before s2 | ⛔ INVALID — revert changes |
+| Skipping `/s2-openspec` | ⛔ INVALID — no spec-driven impl |
+| Not waiting for s2 completion | ⛔ INVALID — unverified changes |
+
+## Flow Coverage (All Paths)
+
+```mermaid
+flowchart TD
+    Q0[Q0: Init] --> Q1[Q1: Propose 3 hypotheses]
+    Q1 --> Q2[Q2: Verify - try to disprove]
+    Q2 -->|All FAIL| Q1
+    Q2 -->|≥1 PASS| Q3[Q3: Test empirically]
+    Q3 -->|All FAIL| Q1
+    Q3 -->|≥1 L2| Q4[Q4: Audit R_eff]
+    Q4 --> Q5{Q5: User Decision}
+    Q5 -->|yes| DRR[Record DRR]
+    Q5 -->|no| FEEDBACK[User feedback] --> Q1
+    Q5 -->|comment| ADJUST[Adjust] --> Q5
+    DRR --> Q6[Q6: /s2-openspec]
+    Q6 --> DONE[✅ Complete]
+```
+
+---
+
+## Failure Rules
+
+| Condition | Action |
+|-----------|--------|
+| `quint_verify` fails ALL | Return to Q1 (generate different hypotheses) |
+| `quint_test` fails ALL | Return to Q1 |
+| 3 consecutive Q1 failures | STOP, ask user for guidance |
+| User says "no" at Q5 | Ask for feedback, return to Q1-Q4 |
+| User says "comment" at Q5 | Adjust recommendation, re-present Q5 |
+| No response at Q5 | WAIT (do not assume yes) |
+| DRR not found at Q6 | ERROR, return to Q5 |
+| `/s2-openspec` fails | STOP, FIX, RETRY (do not proceed) |
 
 ---
 
 ## Output
 
-Executive summary of winning solution and primary selection reason.
+Complete FPF cycle. Implementation via `/s2-openspec` after **explicit** user Q5 approval.
+

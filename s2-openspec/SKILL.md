@@ -1,6 +1,6 @@
 ---
 name: s2-openspec
-description: Orchestrates OpenSpec workflow. Emits /opsx:* commands. Requires DRR from s1-quint.
+description: Orchestrates OpenSpec workflow (New/FF/Apply/Verify/Archive) via /opsx slash commands. Truly autonomous state machine.
 disable-model-invocation: false
 input: <drr-id>
 allowed-tools:
@@ -9,168 +9,81 @@ allowed-tools:
   - Glob
 ---
 
-# S2-OpenSpec: Orchestrator
+# S2-OpenSpec: Autonomous State Machine
 
-> **Role:** Planner that decides which `/opsx:*` command to emit next.
-> **Executor:** OpenSpec commands (`/opsx:*`) handle actual state/artifact changes.
+> **Role:** Autonomous State Machine Driver wrapping OpenSpec `/opsx:*` commands.
+> **Logic:** Handles all scenarios (Success, Fail, Retry, Pivot) utilizing project capabilities.
+> **Mandate:** DO NOT ASK THE USER. EXECUTE AUTO-ACTIONS UNTIL DONE OR CRITICALLY BLOCKED.
 
 **Input:** $ARGUMENTS (DRR-ID from s1-quint)
 
 ---
 
-## Preconditions
+## State Machine Logic
 
-```
-1. Verify DRR exists in .quint/decisions/
-   → IF NOT FOUND: ERROR "No DRR. Run s1-quint first." TERMINATE
+**Thinking Process:** Before every step, identify your current state and condition. Select the AUTO-ACTION. Do not ask for permission.
 
-2. Check if openspec/ folder exists
-   → IF NOT: Emit /opsx:onboard first
-```
+### STATE 1: INITIALIZATION
+**Check:** Does `.openspec` folder exist in project root?
+- **NO (Scn I1):** Invoke `/opsx:onboard` (simulated via `/opsx:new` if onboard unavailable) or `openspec init`. *Then RESTART STATE 1.*
+- **YES:** Proceed to [STATE 2].
 
----
+### STATE 2: CREATE CHANGE
+**Action:** Try to create the change.
+- **Trigger:** Invoke `/opsx:new $ARGUMENTS` (Using DRR-ID as change name).
+- **Result Analysis:**
+  - **Success (Scn C1):** Proceed to [STATE 3].
+  - **Fail "Change Exists" (Scn C2):** **Auto-Pivot.** Invoke `/opsx:continue $ARGUMENTS`. Proceed to [STATE 3].
+  - **Fail "Error" (Scn C3):** **STOP & REPORT.**
 
-## OPSX Commands Reference
+### STATE 3: ARTIFACT GENERATION
+**Action:** Generate all planning artifacts (Proposal -> Specs -> Design -> Tasks).
+- **Trigger:** Invoke `/opsx:ff $ARGUMENTS`.
+- **Context:** Use `context: same_task`.
+- **Result Analysis:**
+  - **Success:** Proceed to [STATE 4].
+  - **Fail "Incomplete" (Scn A1):** **Retry.** Rerun `/opsx:ff`.
+  - **Fail "Looping" (Scn A2):** **STOP & REPORT** (after 2 retries).
 
-> Commands live in project's `.claude/commands/opsx/` folder.
-> Invoke as `/opsx:<command>`.
+### STATE 4: IMPLEMENTATION (APPLY)
+**Action:** Implement the tasks.
+- **Trigger:** Invoke `/opsx:apply $ARGUMENTS`.
+- **Context:** Use `context: same_task`.
+- **Mandate:** If prompt asks "Continue?", **Auto-Reply "Proceed"**. `/opsx:apply` handles the internal task loop.
 
-| Command | Purpose |
-|---------|---------|
-| `/opsx:onboard` | Initialize OpenSpec in project |
-| `/opsx:new` | Start new change |
-| `/opsx:ff` | Fast-forward artifacts |
-| `/opsx:continue` | Continue in-progress change |
-| `/opsx:apply` | Implement per spec |
-| `/opsx:verify` | Validate implementation |
-| `/opsx:archive` | Archive completed change |
-| `/opsx:bulk-archive` | Archive multiple changes |
-| `/opsx:sync` | Sync specs with code |
-| `/opsx:explore` | Explore codebase |
+### STATE 5: VERIFICATION & RETRY LOOP
+**Action:** Verify the implementation.
+- **Trigger:** Invoke `/opsx:verify $ARGUMENTS`.
+- **Result Analysis:**
+  - **PASS (Scn V1):** **Auto-Archive.** Proceed immediately to [STATE 6] to merge changes.
+  - **FAIL < 3 Times (Scn V2):**
+    - **Auto-Fix:** Invoke `/opsx:apply $ARGUMENTS` again.
+    - **Context:** "Fix the failing tests found in verification."
+    - **Loop:** Return to [STATE 5] after applying fixes.
+  - **FAIL >= 3 Times (Scn V3):**
+    - **CRITICAL STOP:** Notify user. "Verification failed 3 times. Please intervene."
 
----
-
-## Decision Logic (All Scenarios)
-
-| Scenario | Condition | Emit Command |
-|----------|-----------|--------------|
-| First-time setup | No `openspec/` folder | `/opsx:onboard` |
-| New change | No active change | `/opsx:new <drr-id>` |
-| Resume work | Active change exists | `/opsx:continue` |
-| Generate artifacts | After new/continue | `/opsx:ff` |
-| Implement | Plan complete | `/opsx:apply` |
-| Validate | Implementation done | `/opsx:verify` |
-| Complete single | Verification passed | `/opsx:archive` |
-| Complete multiple | Multiple changes done | `/opsx:bulk-archive` |
-| Sync existing code | Code changed outside spec | `/opsx:sync` |
-| Research codebase | Need understanding first | `/opsx:explore` |
-
----
-
-## Workflow Scenarios
-
-### Scenario A: Happy Path (New Change)
-
-```
-/opsx:onboard   ← if first time
-/opsx:new <id>
-/opsx:ff
-/opsx:apply
-/opsx:verify
-/opsx:archive
-```
-
-### Scenario B: Resume In-Progress Change
-
-```
-/opsx:continue
-/opsx:ff        ← if artifacts incomplete
-/opsx:apply
-/opsx:verify
-/opsx:archive
-```
-
-### Scenario C: Multiple Changes
-
-```
-/opsx:new <id1>
-/opsx:ff → /opsx:apply → /opsx:verify
-/opsx:new <id2>
-/opsx:ff → /opsx:apply → /opsx:verify
-/opsx:bulk-archive
-```
-
-### Scenario D: Sync After External Changes
-
-```
-/opsx:sync      ← updates specs from code
-/opsx:verify
-/opsx:archive
-```
-
-### Scenario E: Research Before Planning
-
-```
-/opsx:explore   ← understand codebase
-/opsx:new <id>
-... continue normal flow
-```
+### STATE 6: ARCHIVE
+**Action:** Finalize.
+- **Trigger:** Invoke `/opsx:archive $ARGUMENTS`.
+- **Result Analysis:**
+  - **Success (Scn X1):** **DONE.**
+  - **Conflict (Scn X2):** **STOP & REPORT** (Requires manual resolution).
 
 ---
 
-## Flow (All Paths)
+## Critical Execution Rules
 
-```mermaid
-flowchart TD
-    START[DRR from s1] --> INIT{openspec/ exists?}
-    INIT -->|NO| ONBOARD[/opsx:onboard]
-    INIT -->|YES| CHECK
-    ONBOARD --> CHECK{Active change?}
-    
-    CHECK -->|NO| NEW[/opsx:new]
-    CHECK -->|YES| CONTINUE[/opsx:continue]
-    CHECK -->|EXPLORE| EXPLORE[/opsx:explore] --> NEW
-    
-    NEW --> FF[/opsx:ff]
-    CONTINUE --> FF
-    
-    FF --> APPLY[/opsx:apply]
-    APPLY --> VERIFY[/opsx:verify]
-    
-    VERIFY -->|FAIL| FIX[Fix] --> VERIFY
-    VERIFY -->|PASS| ARCHIVE{Multiple changes?}
-    
-    ARCHIVE -->|NO| SINGLE[/opsx:archive]
-    ARCHIVE -->|YES| BULK[/opsx:bulk-archive]
-    
-    SINGLE --> DONE[✅ Complete]
-    BULK --> DONE
-    
-    SYNC[/opsx:sync] --> VERIFY
-```
+1.  **NO NAGGING:**
+    - **NEVER** ask: "Shall I create artifacts?" -> **JUST DO IT (/opsx:ff).**
+    - **NEVER** ask: "Verification failed, try again?" -> **JUST DO IT (/opsx:apply).**
+    - **NEVER** ask: "Change exists, continue?" -> **JUST DO IT (/opsx:continue).**
+    - **NEVER** ask: "Verification passed, archive?" -> **JUST DO IT (/opsx:archive).**
 
----
+2.  **STAY IN CONTEXT:**
+    - Execute all commands within the `s2-openspec` context.
+    - Treat `/opsx:*` output as feedback for the State Machine.
 
-## Failure Rules (All Commands)
-
-| Command | Failure Condition | Action |
-|---------|-------------------|--------|
-| `/opsx:onboard` | Permission denied | Check folder permissions, retry |
-| `/opsx:new` | Invalid ID / already exists | Check ID format, use continue |
-| `/opsx:ff` | Spec syntax error | Fix spec, retry |
-| `/opsx:continue` | No active change | Use new instead |
-| `/opsx:apply` | Spec incomplete | Run ff first |
-| `/opsx:verify` | Tests fail | FIX code, retry |
-| `/opsx:archive` | Verify not passed | Run verify first |
-| `/opsx:bulk-archive` | Some changes incomplete | Complete individual changes |
-| `/opsx:sync` | Conflict detected | Resolve conflicts manually |
-| `/opsx:explore` | No codebase | Run onboard first |
-
----
-
-## Output
-
-```
-✅ Change <id> implemented and archived via OpenSpec.
-Commands executed: [list of /opsx:* commands used]
-```
+3.  **COMMAND SYNTAX:**
+    - Use `/opsx:<command>` (Claude Code strict syntax).
+    - Do NOT use `/openspec-*` (Trae syntax).

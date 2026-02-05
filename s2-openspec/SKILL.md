@@ -1,205 +1,176 @@
 ---
 name: s2-openspec
-description: Orchestrates OpenSpec workflow via skill invocations. Requires DRR from s1-quint or raw feature request.
+description: Orchestrates OpenSpec workflow. Emits /opsx:* commands. Requires DRR from s1-quint.
 disable-model-invocation: false
-input: <feature_request_or_drr_id>
+input: <drr-id>
 allowed-tools:
-  - Bash
-  - Edit
-  - Read
-  - Write
-  - Grep
-  - Glob
-  - TodoWrite
   - SlashCommand
-  - serena_find_symbol
-  - serena_replace_symbol_body
-  - serena_insert_after_symbol
-  - serena_insert_before_symbol
+  - Read
+  - Glob
 ---
 
-# OpenSpec Workflow (Skill-Based)
+# S2-OpenSpec: Orchestrator
 
-> **Prerequisite:** Load `shared-core.md` for definitions (Execution Guardrails, AntiRot, Anti-Patterns).
+> **Role:** Planner that decides which `/opsx:*` command to emit next.
+> **Executor:** OpenSpec commands (`/opsx:*`) handle actual state/artifact changes.
 
-**Input:** $ARGUMENTS
-
----
-
-## Mode Detection & Preconditions
-
-```
-IF input matches DRR-ID pattern:
-   → Verify DRR file exists in .quint/decisions/
-   → IF DRR NOT FOUND:
-        ERROR: "DRR not found. Run s1-quint first."
-        TERMINATE skill
-   → MODE = EXECUTION_ONLY (skip reasoning)
-
-ELSE:
-   → MODE = FULL (run reasoning + execution)
-```
-
-> **PRECONDITION (EXECUTION_ONLY mode):**
-> DRR must exist — proof that user made Q5 decision via s1-quint.
+**Input:** $ARGUMENTS (DRR-ID from s1-quint)
 
 ---
 
-## FULL MODE: Reasoning Kernel
+## Preconditions
 
-> Run this ONLY if input is raw feature request.
-
-### INIT
-1. **Derive $INTENT** — What problem are we solving?
-2. **Research (MANDATORY)** — Offline (ES/GrepAI/Serena) + Online (Docs)
-3. **Bind $STDS** — Identify applicable patterns
-4. **Set $BASE** — Define naive/obvious solution as benchmark
-
-### DIVERGENCE
-Generate 3+ hypotheses vs $BASE adhering to $STDS.
-
-### GROUNDING
-- Simulate execution
-- Scan: vulnerabilities, edge cases, Surgical_Scope violations
-
-### CONVERGENCE
-Vote winner ($Alpha), prune weak logic.
-
-### POLISH
-Refine until FRICTION($Alpha, $STDS) == 0.
-
----
-
-## OpenSpec Skills Reference
-
-| Skill | Purpose |
-|-------|---------|
-| `/openspec-onboard` | Initialize OpenSpec in project |
-| `/openspec-new-change <id>` | Start new change |
-| `/openspec-ff-change` | Fast-forward artifacts |
-| `/openspec-apply-change` | Implement per spec |
-| `/openspec-verify-change` | Validate implementation |
-| `/openspec-archive-change` | Archive completed change |
-| `/openspec-continue-change` | Continue in-progress change |
-| `/openspec-explore` | Explore codebase |
-| `/openspec-sync-specs` | Sync specs with code |
-
----
-
-## Workflow Steps
-
-> **RULE:** Invoke skills, don't simulate.
-> **FAILURE RULE:** If skill fails → STOP, FIX, RETRY. Do NOT proceed.
-
-### Step 0: Pre-Check
-
-If `openspec/` directory doesn't exist:
 ```
-/openspec-onboard
-```
+1. Verify DRR exists in .quint/decisions/
+   → IF NOT FOUND: ERROR "No DRR. Run s1-quint first." TERMINATE
 
-### Step 1: Create Change
-
-**Invoke:**
-```
-/openspec-new-change <change-id>
-```
-
-### Step 2: Generate Artifacts
-
-**Invoke:**
-```
-/openspec-ff-change
-```
-
-### Step 3: Implement
-
-**Invoke:**
-```
-/openspec-apply-change
-```
-
-This skill handles implementation based on generated specs.
-
-### Step 4: Verify
-
-**Invoke:**
-```
-/openspec-verify-change
-```
-
-If fails:
-1. STOP — implementation is incomplete
-2. FIX — address issues
-3. RETRY — run verify again
-
-**Change Audit:**
-- `Audit-REQ`: Verify ALL DRR items are present
-- `Audit-UNREQ`: Check `git diff`. If ANY line not in DRR → REVERT
-
-### Step 5: Archive
-
-**Invoke:**
-```
-/openspec-archive-change
+2. Check if openspec/ folder exists
+   → IF NOT: Emit /opsx:onboard first
 ```
 
 ---
 
-## Flow Coverage
+## OPSX Commands Reference
+
+> Commands live in project's `.claude/commands/opsx/` folder.
+> Invoke as `/opsx:<command>`.
+
+| Command | Purpose |
+|---------|---------|
+| `/opsx:onboard` | Initialize OpenSpec in project |
+| `/opsx:new` | Start new change |
+| `/opsx:ff` | Fast-forward artifacts |
+| `/opsx:continue` | Continue in-progress change |
+| `/opsx:apply` | Implement per spec |
+| `/opsx:verify` | Validate implementation |
+| `/opsx:archive` | Archive completed change |
+| `/opsx:bulk-archive` | Archive multiple changes |
+| `/opsx:sync` | Sync specs with code |
+| `/opsx:explore` | Explore codebase |
+
+---
+
+## Decision Logic (All Scenarios)
+
+| Scenario | Condition | Emit Command |
+|----------|-----------|--------------|
+| First-time setup | No `openspec/` folder | `/opsx:onboard` |
+| New change | No active change | `/opsx:new <drr-id>` |
+| Resume work | Active change exists | `/opsx:continue` |
+| Generate artifacts | After new/continue | `/opsx:ff` |
+| Implement | Plan complete | `/opsx:apply` |
+| Validate | Implementation done | `/opsx:verify` |
+| Complete single | Verification passed | `/opsx:archive` |
+| Complete multiple | Multiple changes done | `/opsx:bulk-archive` |
+| Sync existing code | Code changed outside spec | `/opsx:sync` |
+| Research codebase | Need understanding first | `/opsx:explore` |
+
+---
+
+## Workflow Scenarios
+
+### Scenario A: Happy Path (New Change)
+
+```
+/opsx:onboard   ← if first time
+/opsx:new <id>
+/opsx:ff
+/opsx:apply
+/opsx:verify
+/opsx:archive
+```
+
+### Scenario B: Resume In-Progress Change
+
+```
+/opsx:continue
+/opsx:ff        ← if artifacts incomplete
+/opsx:apply
+/opsx:verify
+/opsx:archive
+```
+
+### Scenario C: Multiple Changes
+
+```
+/opsx:new <id1>
+/opsx:ff → /opsx:apply → /opsx:verify
+/opsx:new <id2>
+/opsx:ff → /opsx:apply → /opsx:verify
+/opsx:bulk-archive
+```
+
+### Scenario D: Sync After External Changes
+
+```
+/opsx:sync      ← updates specs from code
+/opsx:verify
+/opsx:archive
+```
+
+### Scenario E: Research Before Planning
+
+```
+/opsx:explore   ← understand codebase
+/opsx:new <id>
+... continue normal flow
+```
+
+---
+
+## Flow (All Paths)
 
 ```mermaid
 flowchart TD
-    INPUT[Input] --> MODE{Mode?}
-    MODE -->|DRR-ID| EXEC[EXECUTION_ONLY]
-    MODE -->|Feature Request| FULL[FULL MODE]
+    START[DRR from s1] --> INIT{openspec/ exists?}
+    INIT -->|NO| ONBOARD[/opsx:onboard]
+    INIT -->|YES| CHECK
+    ONBOARD --> CHECK{Active change?}
     
-    FULL --> REASON[Reasoning Kernel]
-    REASON --> NEW[/openspec-new-change]
-    NEW --> FF[/openspec-ff-change]
-    FF --> APPLY
+    CHECK -->|NO| NEW[/opsx:new]
+    CHECK -->|YES| CONTINUE[/opsx:continue]
+    CHECK -->|EXPLORE| EXPLORE[/opsx:explore] --> NEW
     
-    EXEC --> CHECK{DRR exists?}
-    CHECK -->|NO| ERROR[❌ Return to s1-quint]
-    CHECK -->|YES| NEW
+    NEW --> FF[/opsx:ff]
+    CONTINUE --> FF
     
-    APPLY[/openspec-apply-change] --> VERIFY[/openspec-verify-change]
+    FF --> APPLY[/opsx:apply]
+    APPLY --> VERIFY[/opsx:verify]
+    
     VERIFY -->|FAIL| FIX[Fix] --> VERIFY
-    VERIFY -->|PASS| AUDIT[Change Audit]
-    AUDIT -->|UNREQ found| REVERT[Revert] --> APPLY
-    AUDIT -->|Clean| ARCHIVE[/openspec-archive-change]
-    ARCHIVE --> DONE[✅ Complete]
+    VERIFY -->|PASS| ARCHIVE{Multiple changes?}
+    
+    ARCHIVE -->|NO| SINGLE[/opsx:archive]
+    ARCHIVE -->|YES| BULK[/opsx:bulk-archive]
+    
+    SINGLE --> DONE[✅ Complete]
+    BULK --> DONE
+    
+    SYNC[/opsx:sync] --> VERIFY
 ```
 
 ---
 
-## Failure Rules
+## Failure Rules (All Commands)
 
-| Condition | Action |
-|-----------|--------|
-| DRR not found (EXEC mode) | ERROR, terminate skill |
-| `/openspec-onboard` fails | Check permissions, retry |
-| `/openspec-new-change` fails | Check ID format, retry |
-| `/openspec-ff-change` fails | Check spec syntax, retry |
-| `/openspec-apply-change` fails | Check spec, retry |
-| `/openspec-verify-change` fails | FIX implementation, retry |
-| Audit-UNREQ finds changes | REVERT unrequested lines |
-| `/openspec-archive-change` fails | Check verification passed first |
-
----
-
-## Anti-Patterns (FORBIDDEN)
-
-> See `shared-core.md` Anti-Patterns table.
+| Command | Failure Condition | Action |
+|---------|-------------------|--------|
+| `/opsx:onboard` | Permission denied | Check folder permissions, retry |
+| `/opsx:new` | Invalid ID / already exists | Check ID format, use continue |
+| `/opsx:ff` | Spec syntax error | Fix spec, retry |
+| `/opsx:continue` | No active change | Use new instead |
+| `/opsx:apply` | Spec incomplete | Run ff first |
+| `/opsx:verify` | Tests fail | FIX code, retry |
+| `/opsx:archive` | Verify not passed | Run verify first |
+| `/opsx:bulk-archive` | Some changes incomplete | Complete individual changes |
+| `/opsx:sync` | Conflict detected | Resolve conflicts manually |
+| `/opsx:explore` | No codebase | Run onboard first |
 
 ---
 
 ## Output
 
 ```
-✅ Change `<id>` implemented and archived.
-
-Mode: FULL / EXECUTION_ONLY
-Verification: PASSED
-Guardrails: All checks passed
+✅ Change <id> implemented and archived via OpenSpec.
+Commands executed: [list of /opsx:* commands used]
 ```

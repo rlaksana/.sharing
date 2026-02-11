@@ -9,3 +9,6 @@ openspec/
 
 # Artifacts
 nul
+
+# Windows shortcuts
+*.lnk

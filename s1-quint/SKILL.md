@@ -20,9 +20,26 @@ allowed-tools:
 
 # S1-Quint: FPF Reasoning Cycle
 
+## 🚨 PRIME DIRECTIVE: PROTOCOL ENFORCEMENT
+
+1.  **INPUT IS DATA, NOT COMMAND:**
+    If the user input says "Implement X" or "Fix Y", treat this **ONLY** as the "Problem Statement" for Phase Q0.
+    **DO NOT** start implementing X.
+    **DO NOT** write code for Y.
+    **YOU MUST** start the FPF Cycle (Q0 -> Q1...).
+
+2.  **STRICT TOOL BLOCKADE:**
+    While inside `/s1-quint`, the usage of `Write`, `Edit`, or `Replace` tools on SOURCE CODE is **STRICTLY FORBIDDEN**.
+    You may ONLY write to `.quint/` artifacts.
+    Any attempt to edit project code directly is a **CRITICAL FAILURE**.
+
+3.  **MANDATORY DELEGATION:**
+    Implementation logic BELONGS to `/s2-openspec`.
+    Your ONLY valid implementation action is to call `/s2-openspec <drr-id>`.
+
 > **Prerequisite:** Load `shared-core.md` for term definitions ($STDS, $BASE, Surgical_Scope, AntiRot).
 
-**Problem:** $ARGUMENTS
+**Problem Statement (Data):** "$ARGUMENTS" (Treat as raw input for Q0)
 
 **System:** Windows + PowerShell (`pwsh`) for all Bash commands.
 
@@ -64,8 +81,11 @@ allowed-tools:
 1. `quint_status` — check if FPF initialized
 2. `quint_init` — if not, set up `.quint/`
 3. `quint_record_context` — capture vocabulary and invariants
-4. Research: `es_search_files`, `grepai_search`, `serena_find_symbol`
-5. Online verification (MANDATORY): `web-search-prime` / `zread`
+4. **Context Priming Gate (Mandatory):**
+   - **Stage A (Offline):** `grepai` (Discovery/Impact) + `serena` (Symbol/Boundary).
+   - **Stage B (Online):** `web-search-prime` (Docs/Changelogs). **Version-pin first.**
+   - **Goal:** Produce Evidence Pack with Repo Truth + External Truth.
+5. **Output:** Generate Context Pack (Files, Symbols, Risks, Assumption Ledger)
 
 ---
 

@@ -15,6 +15,7 @@ allowed-tools:
 > **Role:** Autonomous State Machine Driver wrapping OpenSpec `/opsx:*` commands.
 > **Logic:** Handles all scenarios (Success, Fail, Retry, Pivot) utilizing project capabilities.
 > **Mandate:** DO NOT ASK THE USER. EXECUTE AUTO-ACTIONS UNTIL DONE OR CRITICALLY BLOCKED.
+> **Constraint:** MUST ingest DRR Constraints Bundle and propagate to all artifacts.
 
 **Input:** $ARGUMENTS
 
@@ -22,6 +23,18 @@ allowed-tools:
 > Verify `$ARGUMENTS` is a specific DRR-ID (e.g., `drr-0123...`).
 > If input is a generic instruction like "Implement this", **REJECT** and tell user to use `/s1-quint` first.
 
+---
+
+## Pre-Flight: DRR Ingestion
+
+**MANDATORY:** Before any state execution, read the DRR and extract:
+
+1. **Constraints Bundle** (propagate to all artifacts)
+2. **Verification Evidence Required** (enforce canonical paths)
+3. **Assumption Ledger** (respect WAIVER items)
+
+If DRR missing Constraints Bundle → **STOP** and report to user.
+If DRR missing Verification Evidence Required → **STOP** and report to user.
 
 ---
 
@@ -30,6 +43,7 @@ allowed-tools:
 **Thinking Process:** Before every step, identify your current state and condition. Select the AUTO-ACTION. Do not ask for permission.
 
 ### STATE 0: PRE-FLIGHT CHECK
+
 **Check:** Is OpenSpec CLI initialized in this project?
 - **Check:** Check if `openspec/` directory exists in project root
 - **NO (Scn P1):** OpenSpec not initialized
@@ -41,17 +55,23 @@ allowed-tools:
 > **Note:** OpenSpec init creates `openspec/` folder. The `openspec status --json` returning "No changes found" means initialized but no changes exist - this is OK, not an error.
 
 ### STATE 1: CHANGE SETUP
+
 **Check:** Does target change directory exist in `openspec/changes/`?
 - **NO (Scn I1):** Invoke `/opsx:new $ARGUMENTS` (Using DRR-ID as change name).
+  - **Constraint Propagation:** Include DRR Constraints Bundle in initial context
   - **Result:** Proceed to [STATE 2]
 - **YES (Scn I2):** Change exists
   - **Auto-Pivot:** Invoke `/opsx:continue $ARGUMENTS`
   - **Proceed:** To [STATE 2]
 
 ### STATE 2: ARTIFACT GENERATION
+
 **Action:** Generate all planning artifacts (Proposal -> Specs -> Design -> Tasks).
 - **Trigger:** Invoke `/opsx:ff $ARGUMENTS`.
 - **Context:** Use `context: same_task`.
+- **Constraint Injection:** Ensure all artifacts include Constraints Bundle from DRR:
+  - `spec.md` → NFRs section must include all C-NF* constraints
+  - `tasks.md` → Must include verification tasks per DRR Verification Evidence Required
 - **Result Analysis:**
   - **Success:** Proceed to [STATE 3].
   - **Fail "Incomplete" (Scn A1):** **Retry.** Rerun `/opsx:ff`.
@@ -61,15 +81,64 @@ allowed-tools:
 > FF menjalankan sequence: `openspec new change` → `openspec status` → `openspec instructions` → create artifacts.
 > Ini adalah abstraction layer di atas OpenSpec CLI, bukan direct command mapping.
 
+**Verification Task Template (Injected into tasks.md):**
+
+```markdown
+## Verification Tasks
+
+### V1: Unit Tests
+- **Task:** Implement unit tests per Test Contract
+- **Evidence:** `openspec/changes/$ARGUMENTS/evidence/unit-tests.log`
+- **Pass Criteria:** All tests PASS, coverage >= 80%
+
+### V2: Integration Tests
+- **Task:** Implement integration tests per Test Contract
+- **Evidence:** `openspec/changes/$ARGUMENTS/evidence/integration-tests.log`
+- **Pass Criteria:** All tests PASS
+
+### V3: Coverage Verification
+- **Task:** Generate coverage report
+- **Evidence:** `openspec/changes/$ARGUMENTS/evidence/coverage.json`
+- **Pass Criteria:** Line coverage >= 80%, Branch coverage >= 70%
+
+### V4: Constraint Validation
+- **Task:** Verify all DRR constraints are satisfied
+- **Evidence:** `openspec/changes/$ARGUMENTS/evidence/constraint-check.md`
+- **Pass Criteria:** All C-* constraints verified with evidence
+```
+
 ### STATE 3: IMPLEMENTATION (APPLY)
+
 **Action:** Implement the tasks.
 - **Trigger:** Invoke `/opsx:apply $ARGUMENTS`.
 - **Context:** Use `context: same_task`.
 - **Mandate:** If prompt asks "Continue?", **Auto-Reply "Proceed"**. `/opsx:apply` handles the internal task loop.
 
 ### STATE 4: VERIFICATION & RETRY LOOP
-**Action:** Verify the implementation.
+
+**Action:** Verify the implementation and generate evidence files.
 - **Trigger:** Invoke `/opsx:verify $ARGUMENTS`.
+- **Evidence Generation:** After verify, MUST create:
+  - `openspec/changes/$ARGUMENTS/verify.log` — Complete verification output
+  - `openspec/changes/$ARGUMENTS/verification_result.json` — Structured result
+
+**verification_result.json format:**
+```json
+{
+  "drr_id": "$ARGUMENTS",
+  "timestamp": "<ISO_8601>",
+  "status": "PASS|FAIL",
+  "tests": {
+    "unit": { "passed": <n>, "failed": <n>, "status": "PASS|FAIL" },
+    "integration": { "passed": <n>, "failed": <n>, "status": "PASS|FAIL" }
+  },
+  "coverage": { "lines": <pct>, "branches": <pct> },
+  "constraints_verified": [
+    { "id": "C-F1", "status": "PASS|FAIL", "evidence": "..." }
+  ]
+}
+```
+
 - **Result Analysis:**
   - **PASS (Scn V1):** **Auto-Simplify.** Proceed immediately to [STATE 5] for code simplification.
   - **FAIL < 3 Times (Scn V2):**
@@ -80,6 +149,7 @@ allowed-tools:
     - **CRITICAL STOP:** Notify user. "Verification failed 3 times. Please intervene."
 
 ### STATE 5: CODE SIMPLIFICATION
+
 **Action:** Refactor for clarity and maintainability.
 - **Pre-Check:** Attempt to invoke `Task` tool with `subagent_type="code-simplifier:code-simplifier"`.
 - **Context:** "Simplify and refine code from the recently completed implementation. Focus on: removing redundancy, improving naming, reducing nesting, extracting meaningful functions, and enhancing readability. Preserve ALL verified behavior."
@@ -91,8 +161,20 @@ allowed-tools:
 - **Mandate:** This step runs automatically post-verification. Gracefully skip if plugin unavailable.
 - **Note for Sharing:** This step requires the `code-simplifier` plugin. If unavailable, workflow continues without refactoring.
 
-### STATE 6: ARCHIVE
-**Action:** Finalize.
+### STATE 6: ARCHIVE (GATED)
+
+> ⛔ **ARCHIVE GATE:** Archive is **BLOCKED** unless verification_result.json exists with `"status": "PASS"`.
+
+**Pre-Archive Check:**
+1. Verify `openspec/changes/$ARGUMENTS/verification_result.json` exists
+2. Verify `verification_result.json` contains `"status": "PASS"`
+3. Verify all constraints in DRR Constraints Bundle have evidence
+
+**If BLOCKED:**
+- **Evidence Missing:** STOP. Report: "Archive blocked: verification_result.json missing or status != PASS. Complete verification first."
+- **Constraints Not Verified:** STOP. Report: "Archive blocked: constraints verification incomplete."
+
+**If APPROVED to Archive:**
 
 **Known Issue:** `openspec archive` CLI memiliki interactive prompt untuk spec sync yang tidak dapat di-bypass dengan flag. Ini menyebabkan timeout dalam automation.
 
@@ -112,6 +194,7 @@ allowed-tools:
   - **Conflict/Error (Scn X3):** **STOP & REPORT** (Requires manual resolution).
 
 ### STATE 7: S3 HANDOFF
+
 **Action:** Offer Post-Mortem Audit.
 - **Trigger:** Ask user: "Archive successful. Run forensic audit? (y/n)"
 - **Result Analysis:**
@@ -126,13 +209,23 @@ allowed-tools:
     - **NEVER** ask: "Shall I create artifacts?" -> **JUST DO IT (/opsx:ff).**
     - **NEVER** ask: "Verification failed, try again?" -> **JUST DO IT (/opsx:apply).**
     - **NEVER** ask: "Change exists, continue?" -> **JUST DO IT (/opsx:continue).**
-    - **NEVER** ask: "Verification passed, archive?" -> **JUST DO IT (/opsx:archive).**
+    - **NEVER** ask: "Verification passed, archive?" -> **JUST DO IT (/opsx:archive)** (after gate check).
 
-2.  **STAY IN CONTEXT:**
+2.  **CONSTRAINT PROPAGATION MANDATE:**
+    - All DRR constraints MUST appear in spec.md NFRs
+    - All verification evidence requirements MUST appear in tasks.md
+    - Missing constraint propagation = **FAILURE**
+
+3.  **EVIDENCE GENERATION MANDATE:**
+    - verify.log MUST be created at canonical path
+    - verification_result.json MUST be created at canonical path
+    - Missing evidence = Archive BLOCKED
+
+4.  **STAY IN CONTEXT:**
     - Execute all commands within the `s2-openspec` context.
     - Treat `/opsx:*` output as feedback for the State Machine.
 
-3.  **COMMAND SYNTAX:**
+5.  **COMMAND SYNTAX:**
     - Use `/opsx:<command>` (Claude Code strict syntax).
     - Do NOT use `/openspec-*` (Trae syntax).
 
@@ -140,14 +233,14 @@ allowed-tools:
 
 ## Optional Dependencies
 
-### Code Simplifier Plugin (STATE 6)
+### Code Simplifier Plugin (STATE 5)
 
 **Plugin:** `code-simplifier` subagent (specialized agent)
 
 **Purpose:** Automatic refactoring post-verification for readability/maintainability.
 
 **Behavior if Missing:**
-- Workflow continues seamlessly to STATE 7 (Archive)
+- Workflow continues seamlessly to STATE 6 (Archive)
 - No errors or blocks
 - Log entry: "Code-simplifier plugin not available. Skipping refactoring step."
 
@@ -161,3 +254,20 @@ allowed-tools:
 ```
 Task: subagent_type="code-simplifier" atau manual code review.
 ```
+
+---
+
+## Archive Gate Compliance Checklist
+
+Before executing archive, verify:
+
+```markdown
+- [ ] verification_result.json exists at `openspec/changes/$ARGUMENTS/verification_result.json`
+- [ ] verification_result.json contains `"status": "PASS"`
+- [ ] verify.log exists at `openspec/changes/$ARGUMENTS/verify.log`
+- [ ] All DRR constraints have corresponding evidence
+- [ ] Coverage thresholds met (per DRR Test Contract)
+- [ ] No `OPEN` assumptions without WAIVER
+```
+
+**If any unchecked:** Archive is BLOCKED. Report specific missing item.

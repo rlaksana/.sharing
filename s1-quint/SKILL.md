@@ -4,18 +4,28 @@ description: Orchestrates FPF reasoning cycle (Q0-Q5). Terminates with user deci
 input: <problem_statement>
 allowed-tools:
   - SlashCommand
-  - quint_status
-  - quint_init
-  - quint_record_context
-  - quint_propose
-  - quint_verify
-  - quint_test
-  - quint_audit
-  - quint_calculate_r
-  - quint_decide
-  - quint_actualize
-  - quint_check_decay
-  - quint_audit_tree
+  - mcp__quint-code__quint_status
+  - mcp__quint-code__quint_init
+  - mcp__quint-code__quint_record_context
+  - mcp__quint-code__quint_propose
+  - mcp__quint-code__quint_verify
+  - mcp__quint-code__quint_test
+  - mcp__quint-code__quint_audit
+  - mcp__quint-code__quint_calculate_r
+  - mcp__quint-code__quint_decide
+  - mcp__quint-code__quint_actualize
+  - mcp__quint-code__quint_check_decay
+  - mcp__quint-code__quint_audit_tree
+  - Read
+  - Grep
+  - Glob
+  - mcp__grepai__grepai_search
+  - mcp__grepai__grepai_index_status
+  - mcp__grepai__grepai_trace_callers
+  - mcp__grepai__grepai_trace_callees
+  - mcp__serena__find_symbol
+  - mcp__context7__query-docs
+  - mcp__context7__resolve-library-id
 ---
 
 # S1-Quint: FPF Reasoning Cycle
@@ -81,28 +91,56 @@ allowed-tools:
 
 ---
 
+## Execution Logging (R6 Integrity)
+
+> **MANDATE:** Log all phase transitions and MCP tool calls for S3-Audit R6 verification.
+
+**Setup at Q0:**
+```javascript
+const { ExecutionLogger } = require('.quint/utils/execution-logger');
+const log = new ExecutionLogger('<drr-id>');  // Use DRR ID when available, or 's1-in-progress'
+```
+
+**Phase Logging Pattern:**
+- **At phase start:** `log.startPhase('Q{n}', 's1-quint', { context })`
+- **At phase end:** `log.endPhase('Q{n}', 'COMPLETE'|'ERROR', { metadata })`
+
+**Tool Call Logging Pattern:**
+- **Before MCP call:** (optional context)
+- **After MCP call:** `log.logToolCall('tool_name', args, result, error)`
+
+**Log Output:** `.quint/execution/<drr-id>/execution.jsonl`
+
+---
+
 ## Phase 0: Initialize & Research (Q0)
+
+> **LOG:** `log.startPhase('Q0', 's1-quint', { problem: $ARGUMENTS })`
 
 ### Q0.1: Initialize FPF
 
 1. `quint_status` — check if FPF initialized
 2. `quint_init` — if not, set up `.quint/`
 3. `quint_record_context` — capture vocabulary and invariants
+4. **LOG:** `log.logToolCall('quint_status', {}, result)` and similar for each tool call
 
 ### Q0.2: Context Priming Gate (Mandatory)
 
 **Stage A (Offline - Repo Truth):**
+> ⚠️ **MANDATORY:** Use `grepai_search` for intent/noun discovery. This ensures thorough codebase understanding before proposing hypotheses.
 - `grepai_index_status` — verify index health
-- `grepai_search` — intent/noun discovery
+- `grepai_search` — **ALWAYS RUN** for problem-related code discovery (if applicable to problem type)
 - `grepai_trace_callers/callees` — entrypoints and blast radius
 - `serena.find_symbol` — pin definitions, contracts, types
 - Identify transaction/sync/async boundaries
 
-**Stage B (Online - External Truth):**
-- Form specific, version-aware questions
-- Query official docs (version-pinned) via `websearch` or `context7`
-- Extract changelogs for breaking changes
+**Stage B (Online - External Truth - MANDATORY):**
+- Form specific, version-aware questions.
+- **Primary Research:** Use `surf perplexity` to search for version-pinned official docs, best practices, and deep context.
+- **Library API Signatures:** Use `context7` explicitly for resolving library IDs and querying their version-pinned documentation. 
+- Extract changelogs for breaking changes.
 - **VERSION PINNING RULE:** All references must include version/tag/commit/date. "Latest" or "stable" is INVALID.
+- **Safe Output:** For large research queries, dump `surf perplexity` output to a file (e.g., `surf perplexity "query" > .quint/research_tmp.md`) to avoid context overflow in terminal.
 
 ### Q0.3: Generate Context Pack
 
@@ -170,6 +208,8 @@ The Context Pack is **MANDATORY** and must contain:
 
 ## Phase 1: Abduction (Q1)
 
+> **LOG:** `log.startPhase('Q1', 's1-quint', { hypothesis_count: 3 })`
+
 Generate 3 hypotheses:
 1. **[Naive]**: Simplest solution
 2. **[Standard]**: Best practice
@@ -184,9 +224,12 @@ Register with `quint_propose` including:
 
 ## Phase 2: Deduction (Q2)
 
+> **LOG:** `log.startPhase('Q2', 's1-quint')`
+
 - Try to disprove each hypothesis
 - Check SOLID/DRY violations
 - Check against Context Pack invariants
+- **Research Loopback:** If logical blockers, api deprecations, or unknown constraints emerge, pause and execute a targeted `surf perplexity` query to ground the anomaly before proceeding. Update Assumption Ledger from `OPEN` to `VERIFIED` accordingly.
 - `quint_verify` — mark PASS/FAIL with detailed checks
 
 If ALL fail → return to Phase 1.
@@ -195,8 +238,11 @@ If ALL fail → return to Phase 1.
 
 ## Phase 3: Induction (Q3)
 
+> **LOG:** `log.startPhase('Q3', 's1-quint')`
+
 - Deep read implementation files referenced in Context Pack
 - Propose test strategies matching Test Contract
+- **Research Loopback:** If empirical testing feasibility is blocked by lack of external system knowledge, pause and execute `surf perplexity`.
 - `quint_test` — promote valid to L2 with empirical evidence
 
 If none at L2 → return to Phase 1.
@@ -205,6 +251,8 @@ If none at L2 → return to Phase 1.
 
 ## Phase 4: Audit (Q4)
 
+> **LOG:** `log.startPhase('Q4', 's1-quint')`
+
 - Calculate R_eff, Effort, ROI for each
 - Identify Weakest Link: R_eff = min(evidence_scores)
 - `quint_audit` + `quint_calculate_r`
@@ -212,6 +260,8 @@ If none at L2 → return to Phase 1.
 ---
 
 ## Phase 5: Decision (Q5) — MANDATORY USER GATE
+
+> **LOG:** `log.startPhase('Q5', 's1-quint')`
 
 ### 5.1 Pre-Decision Checklist
 
@@ -250,6 +300,11 @@ Your decision: ___
 ```
 
 ### 5.4 STOP — Wait for User Response
+
+> ⛔ **CRITICAL GUARANTEE: YOU MUST STOP EXECUTION HERE.**
+> DO NOT proceed to Phase 5.5. DO NOT proceed to Phase 6. DO NOT call `/s2-openspec` in the same turn.
+> You MUST end your turn, yield control, and wait for the user to explicitly type their response.
+> Handing off to `/s2-openspec` without waiting for the user's explicit reply is a FATAL ERROR.
 
 **Flow:**
 - User says **"yes"** → Proceed to 5.5
@@ -319,7 +374,10 @@ Call `quint_decide` with:
 
 ## Phase 6: Handoff to S2
 
+> **LOG:** `log.endPhase('Q5', 'COMPLETE', { drr_id: winner_id })` then `log.startPhase('Q6', 's1-quint')`
+
 > ⛔ **CRITICAL: DO NOT SKIP THIS PHASE**
+> ⛔ **CRITICAL TIMING: ONLY EXECUTE THIS STARTING IN A NEW TURN AFTER RECEIVING EXPLICIT "yes" IN Q5. NEVER EXECUTE IN THE SAME INITIAL THINKING TURN AS Q5 PRESENTATION.**
 >
 > You MUST invoke s2-openspec. DO NOT go directly to code editing.
 > Using `serena_*`, `Edit`, or `Write` tools is FORBIDDEN until s2-openspec completes.
@@ -393,12 +451,12 @@ flowchart TD
 | Context Pack incomplete at Q5 | Return to Q0, complete documentation |
 | `quint_verify` fails ALL | Return to Q1 (generate different hypotheses) |
 | `quint_test` fails ALL | Return to Q1 |
-| 3 consecutive Q1 failures | STOP, ask user for guidance |
+| 3 consecutive Q1 failures | TERMINATE. Output: "❌ S1 TERMINATED: 3 Q1 cycles failed. Hypotheses exhausted." Do not ask for guidance. |
 | User says "no" at Q5 | Ask for feedback, return to Q1-Q4 |
 | User says "comment" at Q5 | Adjust recommendation, re-present Q5 |
 | No response at Q5 | WAIT (do not assume yes) |
 | DRR not found at Q6 | ERROR, return to Q5 |
-| `/s2-openspec` fails | STOP, FIX, RETRY (do not proceed) |
+| `/s2-openspec` fails | Retry `/s2-openspec` once. If retry fails, TERMINATE. Output: "❌ S1 TERMINATED: S2 execution failed after retry." |
 
 ---
 

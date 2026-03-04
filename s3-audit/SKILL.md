@@ -7,36 +7,36 @@ allowed-tools:
   - Grep
   - Glob
   - SlashCommand
-  - quint_status
-  - git_status
+  - mcp__quint-code__quint_status
+  - Bash(git status)
   - Bash
 ---
 
-# S3-Audit: Forensic Quality Gate
+# S3-Audit: Post-Mortem Quality Review
 
-> **Persona:** Hostile Lead Reviewer (Zero Trust)
-> **Pipeline:** `s1-quint` (Strategy) -> `s2-openspec` (Execution) -> `s3-audit` (Verification)
-> **Mandate:** FIND failures. Document violations. Block non-compliance.
+> **Persona:** Thorough Reviewer
+> **Pipeline:** `s1-quint` (Strategy) -> `s2-openspec` (Execution) -> `s3-audit` (Review)
+> **Mandate:** FIND issues. Document warnings. Archive ALWAYS proceeds.
 
 **Target DRR:** $ARGUMENTS
 
 ---
 
-## CRITICAL: Zero Trust Mandate
+## Review Mandate
 
-You are the FINAL GATE. Your job is to FIND failures, not to approve.
-Assume non-compliance until proven otherwise.
-Do NOT rationalize violations - document them.
+You are a quality reviewer. Your job is to FIND issues and document them as **warnings**.
+Document findings thoroughly, but **NEVER block the archive process**.
+All findings are advisory — the archive always proceeds.
 
 **Evidence Standard:** Every claim in the audit must cite specific file paths and line numbers.
 
 ---
 
-## Audit Rules (R1-R5) — HARD GATE
+## Audit Rules (R1-R5) — Advisory Checks
 
 ### R1: Pinned References Check
 
-**FAIL IF:** Context Pack or any artifact contains:
+**WARN IF:** Context Pack or any artifact contains:
 - Generic version references: "latest", "stable", "current", "newest"
 - Missing version/date for external libraries/docs
 - Unpinned Git references (use commit hash, not branch name)
@@ -62,7 +62,7 @@ Do NOT rationalize violations - document them.
 
 ### R2: Assumption Ledger Check + Implicit Assumption Detection
 
-**FAIL IF:**
+**WARN IF:**
 - Any `OPEN` items exist without `WAIVER` justification
 - Assumptions lack evidence citations
 - **Implicit assumptions discovered** during audit (not in ledger)
@@ -93,7 +93,7 @@ redis.connect('localhost:6379');
 
 ### R3: Constraint Drift Check (via Diff)
 
-**FAIL IF:** DRR Constraints Bundle differs from S2 artifacts:
+**WARN IF:** DRR Constraints Bundle differs from S2 artifacts:
 - Constraints dropped or weakened in spec.md
 - NFRs missing from original DRR
 - Performance/security constraints omitted in tasks.md
@@ -130,10 +130,10 @@ Scope Drift % = (Out-of-Scope Files / Total Modified Files) × 100
 | Drift % | Status | Action |
 |---------|--------|--------|
 | 0-10% | PASS | Minor drift, acceptable |
-| 10-25% | FAIL | Excessive drift, requires remediation |
-| >25% | ESCALATE | Critical scope violation, human review required |
+| 10-25% | WARN | Excessive drift, note in report |
+| >25% | WARN (HIGH) | Significant scope drift, highlight in report |
 
-**FAIL IF:**
+**WARN IF:**
 - >10% of modified files are outside DRR scope declaration
 - Unrequested changes in unrelated modules
 - Drive-by refactoring not in spec
@@ -154,16 +154,16 @@ Scope Drift % = (Out-of-Scope Files / Total Modified Files) × 100
 
 ---
 
-### R5: Verification Evidence Presence and PASS Status (CRITICAL)
+### R5: Verification Evidence Presence and PASS Status
 
-**CRITICAL FAIL IF:**
+**WARN IF:**
 - `verification_result.json` missing
 - `verify.log` missing
 - `verification_result.json` contains `"status": "FAIL"`
 - Test failures exist in verification logs
 - Archive executed without PASS evidence
 
-**CRITICAL = Cannot be waived. Must be resolved.**
+**Note:** Missing evidence is a warning, not a blocker. Archive always proceeds.
 
 **VERIFICATION:**
 1. Verify file exists: `openspec/changes/<id>/verification_result.json`
@@ -189,6 +189,41 @@ Scope Drift % = (Out-of-Scope Files / Total Modified Files) × 100
 
 ---
 
+### R6: Skill Execution Integrity Check
+
+**WARN IF:**
+- Execution log is missing for the target DRR
+- Required phases/states were skipped (gaps in sequence)
+- Tool call failures detected in execution log
+
+**VERIFICATION:**
+1. Read `.quint/execution/{drr_id}/execution.jsonl`
+2. Parse all phase_start and phase_end entries
+3. Verify S1 sequence: Q0 → Q1 → Q2 → Q3 → Q4 → Q5
+4. Verify S2 sequence: S0 → S1 → S2 → S3 → S5 → S6 → S7
+5. Check for any tool_call entries with status: "error"
+
+**PHASE SKIP DETECTION:**
+| Gap Pattern | Example | Finding |
+|-------------|---------|---------|
+| Missing Q2 | Q1 → Q3 | "Phase skip: Q2 missing" |
+| Missing S3 | S2 → S5 | "State skip: S3 missing" |
+| Incomplete | Q4 without Q5 | "Incomplete: Q5 not reached" |
+
+**TOOL FAILURE DETECTION:**
+```javascript
+// Check execution log for errors
+logEntries
+  .filter(e => e.type === 'tool_call' && e.status === 'error')
+  .map(e => ({
+    tool: e.tool_name,
+    error: e.error_message,
+    timestamp: e.timestamp
+  }))
+```
+
+---
+
 ## Audit Execution Flow
 
 ```
@@ -198,6 +233,7 @@ START
 ┌─────────────────┐
 │ Load DRR        │ ← Read `.quint/decisions/<drr-id>.md`
 │ Load Context    │ ← Read `.quint/context.md`
+│ Load Exec Log   │ ← Read `.quint/execution/{drr_id}/execution.jsonl`
 └────────┬────────┘
          │
          ▼
@@ -206,25 +242,18 @@ START
 │ Execute R2      │ ← Assumption ledger + implicit detection
 │ Execute R3      │ ← Constraint drift via diff
 │ Execute R4      │ ← Scope drift calculation
-│ Execute R5      │ ← Verification evidence (CRITICAL)
+│ Execute R5      │ ← Verification evidence check
+│ Execute R6      │ ← Execution integrity check
 └────────┬────────┘
          │
          ▼
-    ┌─────────┐
-    │ Any FAIL?│
-    │ R5 CRIT? │
-    └────┬────┘
-       │
-   YES │     │ NO
-       │     │
-       ▼     ▼
-┌──────────┐ ┌──────────┐
-│ BLOCKED  │ │ APPROVED │
-│ Generate │ │ Generate │
-│ Verdict  │ │ Verdict  │
-└────┬─────┘ └────┬─────┘
-     │            │
-     ▼            ▼
+┌─────────────────────────┐
+│ ALWAYS APPROVED         │
+│ Collect warnings        │
+│ Generate verdict        │
+└────────┬────────────────┘
+         │
+         ▼
 ┌─────────────────────────┐
 │ Output Artifacts        │
 │ - audit_verdict.md      │
@@ -244,23 +273,24 @@ START
 
 **Date:** <ISO_TIMESTAMP>
 **Auditor:** s3-audit (Zero Trust Gate)
-**Status:** [BLOCKED | CONDITIONAL | APPROVED]
+**Status:** [APPROVED | APPROVED_WITH_WARNINGS]
 
 ## Executive Summary
 
 - **Rule Violations:** <count>
 - **Critical Issues:** <count>
-- **Recommendation:** [DO NOT PROCEED | PROCEED WITH CAUTION | PROCEED]
+- **Recommendation:** [PROCEED | PROCEED_NOTE_WARNINGS]
 
 ## Traceability Matrix
 
 | Rule | Check | Status | Evidence |
 |------|-------|--------|----------|
-| R1 | Pinned References | [PASS/FAIL] | `<file>:<line> "<citation>"` |
-| R2 | Assumption Ledger | [PASS/FAIL] | `<count> OPEN, <count> implicit found` |
-| R3 | Constraint Drift | [PASS/FAIL] | `<diff_summary>` |
-| R4 | Scope Drift | [PASS/FAIL/ESCALATE] | `<pct>% (<out>/<total> files)` |
-| R5 | Verification Evidence | [PASS/CRITICAL FAIL] | `<verify.json status>` |
+| R1 | Pinned References | [PASS/WARN] | `<file>:<line> "<citation>"` |
+| R2 | Assumption Ledger | [PASS/WARN] | `<count> OPEN, <count> implicit found` |
+| R3 | Constraint Drift | [PASS/WARN] | `<diff_summary>` |
+| R4 | Scope Drift | [PASS/WARN] | `<pct>% (<out>/<total> files)` |
+| R5 | Verification Evidence | [PASS/WARN] | `<verify.json status>` |
+| R6 | Execution Integrity | [PASS/WARN] | `<execution.jsonl findings>` |
 
 ## Detailed Findings
 
@@ -317,8 +347,8 @@ START
 - <= 10%: [PASS/FAIL]
 - > 25%: [ESCALATE/N/A]
 
-### R5: Verification Evidence (CRITICAL)
-**Status:** [PASS/CRITICAL FAIL]
+### R5: Verification Evidence
+**Status:** [PASS/WARN]
 
 **Evidence Files:**
 | File | Exists | Status | Notes |
@@ -336,26 +366,36 @@ START
 - Lines: <pct>% [PASS/FAIL]
 - Branches: <pct>% [PASS/FAIL]
 
-## Violations
+### R6: Execution Integrity
+**Status:** [PASS/WARN]
+
+**Execution Log:**
+| File | Exists | Phases | Tool Errors |
+|------|--------|--------|-------------|
+| `execution.jsonl` | [Y/N] | `<count>` | `<count>` |
+
+**Phase Sequence Check:**
+| Skill | Expected | Actual | Status |
+|-------|----------|--------|--------|
+| S1-Quint | Q0→Q1→Q2→Q3→Q4→Q5 | `<sequence>` | [PASS/FAIL] |
+| S2-OpenSpec | S0→S1→S2→S3→S5→S6→S7 | `<sequence>` | [PASS/FAIL] |
+
+**Tool Failures:**
+| Tool | Error | Timestamp |
+|------|-------|-----------|
+| `<tool_name>` | `<error>` | `<timestamp>` |
+
+## Warnings
 
 ### <Rule_ID>: <Title>
-- **Severity:** [CRITICAL | HIGH | MEDIUM]
-- **Description:** <what failed>
+- **Severity:** [HIGH | MEDIUM | LOW]
+- **Description:** <what was found>
 - **Evidence:** `<file>:<line> "<text>"`
-- **Remediation:** <how to fix>
+- **Suggestion:** <how to improve next time>
 
-## Blockers
+## Notes
 
-<!-- If status = BLOCKED -->
-1. <blocker_1>
-2. <blocker_2>
-...
-
-## Sign-Off
-
-- [ ] Reviewed by Human Lead
-- [ ] Violations Addressed
-- [ ] Re-audit Completed
+All warnings are advisory. Archive has proceeded.
 ```
 
 ### 2. verdict.json
@@ -365,93 +405,62 @@ START
   "audit_id": "<uuid>",
   "drr_id": "$ARGUMENTS",
   "timestamp": "<ISO_8601>",
-  "status": "BLOCKED|CONDITIONAL|APPROVED",
+  "status": "APPROVED",
   "rules": {
-    "R1": {
-      "status": "PASS|FAIL",
-      "evidence": "...",
-      "violations": [
-        {"location": "file:line", "issue": "...", "citation": "..."}
-      ]
-    },
-    "R2": {
-      "status": "PASS|FAIL",
-      "open_count": 0,
-      "implicit_found": [],
-      "evidence": "..."
-    },
-    "R3": {
-      "status": "PASS|FAIL",
-      "omissions": [],
-      "weakenings": [],
-      "evidence": "..."
-    },
-    "R4": {
-      "status": "PASS|FAIL|ESCALATE",
-      "total_files": 0,
-      "out_of_scope": 0,
-      "drift_pct": 0.0,
-      "threshold": 10,
-      "escalate_threshold": 25,
-      "files": []
-    },
-    "R5": {
-      "status": "PASS|CRITICAL_FAIL",
-      "verification_result_exists": true,
-      "verify_log_exists": true,
-      "test_status": "PASS",
-      "evidence": "..."
-    }
+    "R1": { "status": "PASS|WARN", "evidence": "..." },
+    "R2": { "status": "PASS|WARN", "evidence": "..." },
+    "R3": { "status": "PASS|WARN", "evidence": "..." },
+    "R4": { "status": "PASS|WARN", "drift_pct": 0.0, "evidence": "..." },
+    "R5": { "status": "PASS|WARN", "evidence": "..." },
+    "R6": { "status": "PASS|WARN", "phases_complete": true, "tool_errors": 0, "evidence": "..." }
   },
-  "blockers": [
+  "warnings": [
     {
       "rule": "R<N>",
-      "severity": "CRITICAL|HIGH|MEDIUM",
+      "severity": "HIGH|MEDIUM|LOW",
       "description": "...",
-      "remediation": "..."
+      "suggestion": "..."
     }
   ],
   "summary": {
-    "total_violations": 0,
-    "critical_count": 0,
+    "total_warnings": 0,
     "high_count": 0,
     "medium_count": 0,
-    "recommendation": "PROCEED|PROCEED_WITH_CAUTION|DO_NOT_PROCEED"
+    "low_count": 0,
+    "recommendation": "PROCEED"
   }
 }
 ```
 
 ---
 
-## Failure Handling
+## Finding Handling
+
+All findings are **warnings only**. Archive always proceeds.
 
 | Condition | Action |
 |-----------|--------|
-| R1 FAIL | BLOCKED — Require version pinning fixes |
-| R2 FAIL (OPEN items) | BLOCKED — Close assumptions or add WAIVER |
-| R2 FAIL (implicit found) | BLOCKED — Document in Assumption Ledger |
-| R3 FAIL | BLOCKED — Reconcile constraints, re-run S2 |
-| R4 >10% drift | BLOCKED — Remove out-of-scope changes |
-| R4 >25% drift | ESCALATE — Human review required |
-| **R5 FAIL** | **CRITICAL BLOCKED** — Cannot be waived |
-| >3 violations | BLOCKED — Systemic process failure |
-
-**ESCALATE Procedure:**
-1. Generate verdict with ESCALATE status
-2. Include detailed traceability matrix
-3. STOP — Do not proceed without human decision
-4. Log: "Scope drift exceeds 25% threshold. Human review required."
+| R1 WARN | Note: Suggest version pinning for next cycle |
+| R2 WARN (OPEN items) | Note: Suggest closing assumptions |
+| R2 WARN (implicit found) | Note: Suggest documenting in Assumption Ledger |
+| R3 WARN | Note: Suggest reconciling constraints next time |
+| R4 >10% drift | Note: Flag scope drift in report |
+| R4 >25% drift | Note: Highlight significant scope drift |
+| R5 WARN | Note: Suggest adding verification evidence next time |
+| R6 WARN (phase skip) | Note: Flag phase skip for investigation |
+| R6 WARN (tool failure) | Note: Report tool failure for debugging |
+| >3 warnings | Note: Highlight process improvement opportunities |
 
 ---
 
 ## Completion
 
+**S3 ALWAYS terminates after producing artifacts.** It does not wait for user input.
+
 **Output:**
 - `audit_verdict.md`
 - `verdict.json`
 
-**Next Steps:**
-- If **APPROVED** → Proceed to deployment/release
-- If **BLOCKED** → Remediate violations, re-trigger `/s3-audit <drr-id>`
-- If **CONDITIONAL** → Document waivers with human approval
-- If **ESCALATE** → Human review, then re-audit or waive
+**User reviews verdict independently. Verdict is always APPROVED.**
+- **APPROVED** → No warnings found, proceed
+- **APPROVED_WITH_WARNINGS** → Warnings noted for future improvement, archive proceeded

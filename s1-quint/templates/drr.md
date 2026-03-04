@@ -45,7 +45,7 @@ Key factors:
 - `C-NF1`: Performance: API response < 100ms at p95 under 1000 RPS
 - `C-NF2`: Security: All inputs sanitized, parameterized queries only
 - `C-NF3`: Reliability: 99.9% uptime during deployment
-- `C-NF4**: Observability: All errors logged with correlation IDs
+- `C-NF4`: Observability: All errors logged with correlation IDs
 
 ### Scope Boundaries
 **IN-SCOPE:**

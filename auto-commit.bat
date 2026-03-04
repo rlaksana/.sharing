@@ -2,12 +2,35 @@
 chcp 65001 >nul
 setlocal enabledelayedexpansion
 
-REM Auto Commit & Push Script
+REM Auto Commit & Push Script with Skill Sync
 REM Usage: auto-commit.bat ["commit message"]
 
 echo ============================================
-echo  Auto Commit & Push
+echo  Auto Sync Skills, Commit & Push
 echo ============================================
+
+REM Sync skills from global .claude/skills/ to local repo
+echo.
+echo [INFO] Syncing skills from global .claude/skills/...
+
+set "SOURCE_DIR=C:\Users\Richard\.claude\skills"
+set "DEST_DIR=%~dp0"
+
+for %%S in (s1-quint s2-openspec s3-audit) do (
+    if exist "%SOURCE_DIR%\%%S" (
+        echo [SYNC] Copying %%S...
+        xcopy "%SOURCE_DIR%\%%S\*" "%DEST_DIR%\%%S\" /E /I /Y /Q >nul
+        if errorlevel 1 (
+            echo [WARN] Failed to copy %%S
+        ) else (
+            echo [OK] %%S synced
+        )
+    ) else (
+        echo [WARN] Source not found: %%S
+    )
+)
+
+echo [INFO] Skill sync complete.
 
 REM Check if we're in a git repo
 git rev-parse --git-dir >nul 2>&1

@@ -136,11 +136,11 @@ const log = new ExecutionLogger('<drr-id>');  // Use DRR ID when available, or '
 
 **Stage B (Online - External Truth - MANDATORY):**
 - Form specific, version-aware questions.
-- **Primary Research:** Use `surf perplexity` to search for version-pinned official docs, best practices, and deep context.
-- **Library API Signatures:** Use `context7` explicitly for resolving library IDs and querying their version-pinned documentation. 
+- **🚨 NO WEB SEARCH TOOLS:** Do NOT use built-in `web search`, `websearch`, `search_web`, or `webfetch` tools. These tools are unreliable and have been flagged as failing. Use `surf aimode` instead — it already performs web search internally via AI Mode. You can explicitly instruct it to search in the prompt.
+- **Library API Signatures:** Use `context7` explicitly for resolving library IDs and querying their version-pinned documentation.
 - Extract changelogs for breaking changes.
 - **VERSION PINNING RULE:** All references must include version/tag/commit/date. "Latest" or "stable" is INVALID.
-- **Safe Output:** For large research queries, dump `surf perplexity` output to a file (e.g., `surf perplexity "query" > .quint/research_tmp.md`) to avoid context overflow in terminal.
+- **Safe Output:** For large research queries, dump `surf aimode` output to a file (e.g., `surf aimode "query" > .quint/research_tmp.md`) to avoid context overflow in terminal.
 
 ### Q0.3: Generate Context Pack
 
@@ -229,7 +229,7 @@ Register with `quint_propose` including:
 - Try to disprove each hypothesis
 - Check SOLID/DRY violations
 - Check against Context Pack invariants
-- **Research Loopback:** If logical blockers, api deprecations, or unknown constraints emerge, pause and execute a targeted `surf perplexity` query to ground the anomaly before proceeding. Update Assumption Ledger from `OPEN` to `VERIFIED` accordingly.
+- **Research Loopback:** If logical blockers, api deprecations, or unknown constraints emerge, pause and execute a targeted `surf aimode` query to ground the anomaly before proceeding. Update Assumption Ledger from `OPEN` to `VERIFIED` accordingly.
 - `quint_verify` — mark PASS/FAIL with detailed checks
 
 If ALL fail → return to Phase 1.
@@ -242,7 +242,7 @@ If ALL fail → return to Phase 1.
 
 - Deep read implementation files referenced in Context Pack
 - Propose test strategies matching Test Contract
-- **Research Loopback:** If empirical testing feasibility is blocked by lack of external system knowledge, pause and execute `surf perplexity`.
+- **Research Loopback:** If empirical testing feasibility is blocked by lack of external system knowledge, pause and execute `surf aimode`.
 - `quint_test` — promote valid to L2 with empirical evidence
 
 If none at L2 → return to Phase 1.

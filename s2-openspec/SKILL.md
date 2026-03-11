@@ -2,7 +2,7 @@
 name: s2-openspec
 description: Sequential execution workflow for OpenSpec (FF/Apply/Verify/Archive) via /opsx slash commands. Executes steps inline without user interaction.
 disable-model-invocation: false
-input: <drr-id>
+input: <drr-id_or_description>
 allowed-tools:
   - SlashCommand
   - Read
@@ -28,8 +28,9 @@ allowed-tools:
 **Input:** $ARGUMENTS
 
 > ⛔ **INPUT GUARDRAIL:**
-> Verify `$ARGUMENTS` is a specific DRR-ID (e.g., `drr-0123...`).
-> If input is a generic instruction like "Implement this", **REJECT** and tell user to use `/s1-quint` first.
+> The input `$ARGUMENTS` can be a specific DRR-ID (e.g., `drr-0123...`) OR a generic description (e.g. "Implement a generic feature").
+> If you receive a generic description, you must synthesize a short kebab-case name for the change. Let this be `$CHANGE_NAME`. Let `$HAS_DRR=false`.
+> If you receive a DRR-ID, `$CHANGE_NAME` is the DRR-ID. Let `$HAS_DRR=true`.
 
 ---
 
@@ -37,9 +38,9 @@ allowed-tools:
 
 **CRITICAL:** DRR-ID input MUST be normalized to lowercase kebab-case before use.
 
-**Action:** Before any state execution, normalize the input name:
+**Action:** Before any state execution, normalize the change name:
 ```bash
-node ~/.claude/skills/s2-openspec/scripts/normalize-change-name.js "$ARGUMENTS"
+node ~/.claude/skills/s2-openspec/scripts/normalize-change-name.js "$CHANGE_NAME"
 ```
 
 **Purpose:**
@@ -47,13 +48,13 @@ node ~/.claude/skills/s2-openspec/scripts/normalize-change-name.js "$ARGUMENTS"
 - Prevents kebab-case validation errors on uppercase prefixes
 - Ensures consistent naming across all OpenSpec operations
 
-**All subsequent `$ARGUMENTS` references in this skill use the normalized name.**
+**All subsequent references to `$CHANGE_NAME` in this skill use the normalized name.**
 
 ---
 
-## Pre-Flight: DRR Ingestion
+## Pre-Flight: DRR Ingestion (Conditional)
 
-**MANDATORY:** Before any state execution, read the DRR and extract:
+**MANDATORY:** If `$HAS_DRR=true`, read the DRR and extract:
 
 1. **Constraints Bundle** (propagate to all artifacts)
 2. **Verification Evidence Required** (enforce canonical paths)
@@ -61,6 +62,8 @@ node ~/.claude/skills/s2-openspec/scripts/normalize-change-name.js "$ARGUMENTS"
 
 If DRR missing Constraints Bundle → **TERMINATE.** Output: "❌ S2 TERMINATED: DRR missing Constraints Bundle. S1 failed to produce valid DRR."
 If DRR missing Verification Evidence Required → **TERMINATE.** Output: "❌ S2 TERMINATED: DRR missing Verification Evidence. S1 failed to produce valid DRR."
+
+If `$HAS_DRR=false`, skip DRR ingestion and constraint checking entirely.
 
 ---
 
@@ -71,14 +74,14 @@ If DRR missing Verification Evidence Required → **TERMINATE.** Output: "❌ S2
 **Setup:**
 ```javascript
 const { ExecutionLogger } = require('.quint/utils/execution-logger');
-const log = new ExecutionLogger($ARGUMENTS);  // Use DRR ID as log scope
+const log = new ExecutionLogger($CHANGE_NAME);  // Use Change Name as log scope
 ```
 
 **State Logging Pattern:**
 - **At state start:** `log.startPhase('S{n}', 's2-openspec', { context })`
 - **At state end:** `log.endPhase('S{n}', 'COMPLETE'|'ERROR', { metadata })`
 
-**Log Output:** `.quint/execution/$ARGUMENTS/execution.jsonl`
+**Log Output:** `.quint/execution/$CHANGE_NAME/execution.jsonl`
 
 ---
 
@@ -88,7 +91,7 @@ const log = new ExecutionLogger($ARGUMENTS);  // Use DRR ID as log scope
 
 ### STATE 0: PRE-FLIGHT CHECK
 
-> **LOG:** `log.startPhase('S0', 's2-openspec', { drr_id: $ARGUMENTS })`
+> **LOG:** `log.startPhase('S0', 's2-openspec', { change_name: $CHANGE_NAME })`
 
 **Check:** Is OpenSpec CLI initialized in this project?
 - **Check:** Check if `openspec/` directory exists in project root
@@ -100,33 +103,61 @@ const log = new ExecutionLogger($ARGUMENTS);  // Use DRR ID as log scope
 
 > **Note:** OpenSpec init creates `openspec/` folder. The `openspec status --json` returning "No changes found" means initialized but no changes exist - this is OK, not an error.
 
+### STATE 0.5: CONTEXT PRIMING (CONDITIONAL)
+
+> **LOG:** `log.startPhase('S0.5', 's2-openspec')`
+
+**Action:** Gather repository and external context before generating artifacts.
+
+**Rationale:** When S2 is called autonomously without a DRR, it must ground its understanding of the codebase and external libraries before writing specifications, mimicking S1's Context Priming Gate.
+
+- **Check `$HAS_DRR`:**
+  - **If `$HAS_DRR=true`:** Skip this state. Context priming was already performed by S1-Quint. Proceed to [STATE 1].
+  - **If `$HAS_DRR=false`:** Perform Context Priming:
+    1.  **Repo Truth:** Use `grepai_search` to discover problem-related code, `serena.find_symbol` to pin definitions, and identify blast radius constraints.
+    2.  **External Truth:** If external libraries or documentation are needed, use `surf aimode` to search for version-pinned official docs. **🚨 Do NOT use built-in `WebSearch` tool** — it is unreliable. `surf aimode` already performs web search internally via AI Mode. You MUST ground unknown libraries via `surf aimode`.
+       - **✅ WebFetch is OK:** Use `WebFetch` to retrieve specific pages when you have a known URL.
+    3.  **Context Integration:** Maintain this gathered context (Repo Facts, External Facts, Assumptions) in your working memory to accurately ground the specifications during artifact generation in [STATE 1].
+- **Proceed:** To [STATE 1]
+
 ### STATE 1: CHANGE SETUP → ARTIFACT GENERATION (MERGED)
 
 > **LOG:** `log.startPhase('S1', 's2-openspec')`
 
-**Action:** Invoke `/opsx:ff $ARGUMENTS` directly.
+**Action:** Determine workflow path and generate artifacts.
 
-**Rationale:** `/opsx:ff` handles both change creation (if not exists) AND artifact generation in one flow. This bypasses the STOP point in `/opsx:new` and achieves full autonomy.
+**Rationale:** S2 supports a universal generic task range from easy to advanced levels. We must dynamically select the right OpenSpec workflow based on whether we have a DRR and the complexity of the task.
 
-- **Trigger:** Invoke `/opsx:ff $ARGUMENTS`.
-- **Context:** Use `context: same_task`.
-- **Handling Pauses:** If `/opsx:ff` pauses to ask a question (e.g., "What change do you want to work on?"), DO NOT stop to ask the user. Autonomously answer the question using the context from the DRR constraints.
-- **Proceed:** To [STATE 2]
+- **Check `$HAS_DRR` AND Task Complexity:**
+  - **Path A (Simple Task, No DRR):** If `$HAS_DRR=false` AND the description represents a straightforward, quick feature or bug fix:
+    - **Trigger:** Invoke `/opsx:ff $CHANGE_NAME`
+    - **Context:** Pass the original `$ARGUMENTS` description. `/opsx:ff` handles basic artifact generation.
+  - **Path B (Advanced Task, or Has DRR):** If `$HAS_DRR=true` OR the description represents a complex feature needing complete specs, design, and explicit explicit control:
+    - **Trigger:** Invoke `/opsx:ff $CHANGE_NAME`
+    - **Context:** If `$HAS_DRR=false`, pass the generic description as context to help `ff`. If `$HAS_DRR=true`, use `context: same_task`.
+- **Handling Pauses:** If `/opsx:ff` pauses to ask a question (e.g., "What change do you want to work on?"), DO NOT stop to ask the user. Autonomously answer the question using the context from the DRR constraints or the original generic description.
+
+> 🚨 **CRITICAL — DO NOT STOP HERE:**
+> `/opsx:ff` will output something like "All artifacts created! Ready for implementation. Run /opsx:apply..."
+> This is **feedback to the state machine**, NOT a signal to stop and report to the user.
+> You MUST treat this output as confirmation that STATE 1 succeeded, then **IMMEDIATELY execute STATE 2** in the same turn.
+> Stopping here to summarize artifacts or ask "should I continue?" is a **FATAL ERROR**.
+
+- **Proceed:** IMMEDIATELY chain to [STATE 2] — do NOT output any summary, do NOT pause.
 
 ### STATE 2: IMPLEMENTATION (APPLY)
 
 > **LOG:** `log.startPhase('S2', 's2-openspec')`
 
-**Action:** Invoke `/opsx:apply $ARGUMENTS`.
+**Action:** Invoke `/opsx:apply $CHANGE_NAME`.
 - **Handling Pauses:** If `/opsx:apply` pauses because tasks are ambiguous or an issue is encountered, DO NOT ask the user. Analyze the artifacts yourself, make a technical decision, continue the tasks, and document your resolution.
 - **Result Analysis:**
-  - **Success:** Proceed to [STATE 3] (Verification).
-  - **Fail "Incomplete" (Scn A1):** **Retry.** Rerun `/opsx:ff`.
+  - **Success:** IMMEDIATELY chain to [STATE 3] (Verification) — do NOT summarize or pause.
+  - **Fail "Incomplete" (Scn A1):** **Retry.** Rerun the artifact generation step (`/opsx:ff`).
   - **Fail "Looping" (Scn A2):** After 2 retries, **TERMINATE.** Output: "❌ S2 TERMINATED: Apply looping after 2 retries. Implementation blocked."
 
-> **IMPORTANT:** `/opsx:ff` adalah **skill-level workflow**, bukan CLI command.
-> FF menjalankan sequence: `openspec new change` → `openspec status` → `openspec instructions` → create artifacts.
-> Ini adalah abstraction layer di atas OpenSpec CLI, bukan direct command mapping.
+> **IMPORTANT:** `/opsx:ff` and related commands are **skill-level workflows**, not just CLI commands.
+> They are abstraction layers above the OpenSpec CLI.
 
 **Verification Task Template (Injected into tasks.md):**
 
@@ -135,22 +166,22 @@ const log = new ExecutionLogger($ARGUMENTS);  // Use DRR ID as log scope
 
 ### V1: Unit Tests
 - **Task:** Implement unit tests per Test Contract
-- **Evidence:** `openspec/changes/$ARGUMENTS/evidence/unit-tests.log`
+- **Evidence:** `openspec/changes/$CHANGE_NAME/evidence/unit-tests.log`
 - **Pass Criteria:** All tests PASS, coverage >= 80%
 
 ### V2: Integration Tests
 - **Task:** Implement integration tests per Test Contract
-- **Evidence:** `openspec/changes/$ARGUMENTS/evidence/integration-tests.log`
+- **Evidence:** `openspec/changes/$CHANGE_NAME/evidence/integration-tests.log`
 - **Pass Criteria:** All tests PASS
 
 ### V3: Coverage Verification
 - **Task:** Generate coverage report
-- **Evidence:** `openspec/changes/$ARGUMENTS/evidence/coverage.json`
+- **Evidence:** `openspec/changes/$CHANGE_NAME/evidence/coverage.json`
 - **Pass Criteria:** Line coverage >= 80%, Branch coverage >= 70%
 
-### V4: Constraint Validation
+### V4: Constraint Validation (Skip if $HAS_DRR=false)
 - **Task:** Verify all DRR constraints are satisfied
-- **Evidence:** `openspec/changes/$ARGUMENTS/evidence/constraint-check.md`
+- **Evidence:** `openspec/changes/$CHANGE_NAME/evidence/constraint-check.md`
 - **Pass Criteria:** All C-* constraints verified with evidence
 ```
 
@@ -163,16 +194,16 @@ const log = new ExecutionLogger($ARGUMENTS);  // Use DRR ID as log scope
 > **LOG:** `log.startPhase('S3', 's2-openspec')`
 
 **Action:** Verify the implementation and generate evidence files.
-- **Trigger:** Invoke `/opsx:verify $ARGUMENTS`.
-- **Handling Pauses:** If `/opsx:verify` asks to select a change due to ambiguity, DO NOT prompt the user. You must select the change matching `$ARGUMENTS` automatically.
+- **Trigger:** Invoke `/opsx:verify $CHANGE_NAME`.
+- **Handling Pauses:** If `/opsx:verify` asks to select a change due to ambiguity, DO NOT prompt the user. You must select the change matching `$CHANGE_NAME` automatically.
 - **Evidence Generation:** After verify, MUST create:
-  - `openspec/changes/$ARGUMENTS/verify.log` — Complete verification output
-  - `openspec/changes/$ARGUMENTS/verification_result.json` — Structured result
+  - `openspec/changes/$CHANGE_NAME/verify.log` — Complete verification output
+  - `openspec/changes/$CHANGE_NAME/verification_result.json` — Structured result
 
 **verification_result.json format:**
 ```json
 {
-  "drr_id": "$ARGUMENTS",
+  "change_name": "$CHANGE_NAME",
   "timestamp": "<ISO_8601>",
   "status": "PASS|FAIL",
   "tests": {
@@ -194,7 +225,7 @@ const log = new ExecutionLogger($ARGUMENTS);  // Use DRR ID as log scope
     - Add `"incomplete_tasks": ["task description"]` to verification_result.json
     - Proceed to [STATE 5].
   - **FAIL < 3 Times (Scn V2):**
-    - **Auto-Fix:** Invoke `/opsx:apply $ARGUMENTS` again.
+    - **Auto-Fix:** Invoke `/opsx:apply $CHANGE_NAME` again.
     - **Context:** "Fix the failing tests found in verification."
     - **Loop:** Return to [STATE 3] (Verification) after applying fixes.
   - **FAIL >= 3 Times (Scn V3):**
@@ -223,9 +254,9 @@ const log = new ExecutionLogger($ARGUMENTS);  // Use DRR ID as log scope
 > ⛔ **ARCHIVE GATE:** Archive is **BLOCKED** unless verification_result.json exists with `"status": "PASS"`.
 
 **Pre-Archive Check:**
-1. Verify `openspec/changes/$ARGUMENTS/verification_result.json` exists
+1. Verify `openspec/changes/$CHANGE_NAME/verification_result.json` exists
 2. Verify `verification_result.json` contains `"status": "PASS"`
-3. Verify all constraints in DRR Constraints Bundle have evidence
+3. If `$HAS_DRR=true`: Verify all constraints in DRR Constraints Bundle have evidence
 
 **If BLOCKED:**
 - **Evidence Missing:** **TERMINATE.** Output: "❌ S2 TERMINATED: Archive blocked — verification_result.json missing or status != PASS."
@@ -233,15 +264,15 @@ const log = new ExecutionLogger($ARGUMENTS);  // Use DRR ID as log scope
 
 **If APPROVED to Archive:**
 
-- **Attempt 1 - CLI:** Invoke `/opsx:archive $ARGUMENTS`
+- **Attempt 1 - CLI:** Invoke `/opsx:archive $CHANGE_NAME`
   - **Handling Pauses:** If `/opsx:archive` warns about incomplete artifacts/tasks or asks whether to sync or skip, DO NOT ask the user. You must choose "Sync now" or "Archive without syncing" automatically based on your confidence, and proceed.
   - **Success (Scn X1):** Proceed to [STATE 7].
   - **Fail (Scn X2):**
     - **Fallback:** Manual archive
       ```bash
       mkdir -p openspec/changes/archive
-      cp -r "openspec/changes/$ARGUMENTS" "openspec/changes/archive/$(date +%Y-%m-%d)-$ARGUMENTS"
-      rm -rf "openspec/changes/$ARGUMENTS"
+      cp -r "openspec/changes/$CHANGE_NAME" "openspec/changes/archive/$(date +%Y-%m-%d)-$CHANGE_NAME"
+      rm -rf "openspec/changes/$CHANGE_NAME"
       ```
     - **Log:** "Archive CLI failed. Used manual archive fallback."
     - **Proceed:** To [STATE 7].
@@ -251,7 +282,7 @@ const log = new ExecutionLogger($ARGUMENTS);  // Use DRR ID as log scope
 > **LOG:** `log.startPhase('S7', 's2-openspec')` then `log.endPhase('S7', 'COMPLETE')` at completion
 
 **Action:** Execute Post-Mortem Audit.
-- **Trigger:** Auto-invoke `/s3-audit $ARGUMENTS` for forensic quality gate.
+- **Trigger:** Auto-invoke `/s3-audit $CHANGE_NAME` for forensic quality gate.
 - **Result Analysis:**
   - **Success:** **DONE.**
   - **Fail:** **TERMINATE.** Output: "❌ S2 TERMINATED: S3 audit failed. Review audit_verdict.md."
@@ -263,7 +294,7 @@ const log = new ExecutionLogger($ARGUMENTS);  // Use DRR ID as log scope
 1.  **NO PAUSING, NO ANNOUNCING:**
     - **NEVER** ask for permission or clarification if an `/opsx` command pauses.
     - **NEVER** output a summary of steps/states before starting. Your first output must be a tool call.
-    - **If a command asks to select an option** (e.g., ambiguous change name), **YOU select it** based on `$ARGUMENTS`.
+    - **If a command asks to select an option** (e.g., ambiguous change name), **YOU select it** based on `$CHANGE_NAME`.
     - **If a command warns about missing artifacts or tasks**, **YOU decide** to fix them or proceed.
     - **If a command encounters an error or issue**, **YOU fix it** implicitly.
     - **NEVER** ask: "Shall I create artifacts?" -> **JUST DO IT (/opsx:ff).**
@@ -272,6 +303,7 @@ const log = new ExecutionLogger($ARGUMENTS);  // Use DRR ID as log scope
     - **NEVER** ask: "Verification passed, archive?" -> **JUST DO IT (/opsx:archive)** (after gate check).
     - **NEVER** output: "S2-OpenSpec is now active" or "Autonomous execution in progress" -> This is a SKILL, not a process.
     - **CHAIN EXECUTION:** When one step succeeds, IMMEDIATELY start the next step. Do not pause your execution turn.
+    - **COMPLETION-LIKE OUTPUT IS NOT A STOP SIGNAL:** Every `/opsx:*` command outputs text like "All artifacts created!", "All tasks complete!", "Ready for implementation!". These are **state machine feedback**, NOT instructions to stop and report to the user. Treat them as confirmation to proceed to the next STATE.
 
 2.  **CONSTRAINT PROPAGATION MANDATE:**
     - All DRR constraints MUST appear in spec.md NFRs
@@ -324,12 +356,12 @@ Task: subagent_type="code-simplifier" atau manual code review.
 Before executing archive, verify:
 
 ```markdown
-- [ ] verification_result.json exists at `openspec/changes/$ARGUMENTS/verification_result.json`
+- [ ] verification_result.json exists at `openspec/changes/$CHANGE_NAME/verification_result.json`
 - [ ] verification_result.json contains `"status": "PASS"`
-- [ ] verify.log exists at `openspec/changes/$ARGUMENTS/verify.log`
-- [ ] All DRR constraints have corresponding evidence
+- [ ] verify.log exists at `openspec/changes/$CHANGE_NAME/verify.log`
+- [ ] IF HAS_DRR=true: All DRR constraints have corresponding evidence
 - [ ] Coverage thresholds met (per DRR Test Contract)
-- [ ] No `OPEN` assumptions without WAIVER
+- [ ] IF HAS_DRR=true: No `OPEN` assumptions without WAIVER
 ```
 
 **If any unchecked:** Archive is BLOCKED. Report specific missing item.

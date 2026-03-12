@@ -7,8 +7,11 @@ allowed-tools:
   - SlashCommand
   - Read
   - Glob
-  - Task
   - Bash
+  - WebFetch
+  - Agent
+  - mcp__grepai__grepai_search
+  - mcp__serena__find_symbol
 ---
 
 # S2-OpenSpec: Sequential Execution Workflow
@@ -71,15 +74,21 @@ If `$HAS_DRR=false`, skip DRR ingestion and constraint checking entirely.
 
 > **MANDATE:** Log all state transitions for S3-Audit R6 verification.
 
-**Setup:**
-```javascript
-const { ExecutionLogger } = require('.quint/utils/execution-logger');
-const log = new ExecutionLogger($CHANGE_NAME);  // Use Change Name as log scope
+**Setup:** Create the log directory early (STATE 0):
+```bash
+mkdir -p ".quint/execution/$CHANGE_NAME"
 ```
 
-**State Logging Pattern:**
-- **At state start:** `log.startPhase('S{n}', 's2-openspec', { context })`
-- **At state end:** `log.endPhase('S{n}', 'COMPLETE'|'ERROR', { metadata })`
+**State Logging Pattern** — append a JSON line at each state start/end:
+```bash
+# State start
+echo "{\"phase\":\"S0\",\"status\":\"start\",\"skill\":\"s2-openspec\",\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" \
+  >> ".quint/execution/$CHANGE_NAME/execution.jsonl"
+
+# State end
+echo "{\"phase\":\"S0\",\"status\":\"COMPLETE\",\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" \
+  >> ".quint/execution/$CHANGE_NAME/execution.jsonl"
+```
 
 **Log Output:** `.quint/execution/$CHANGE_NAME/execution.jsonl`
 
@@ -128,13 +137,9 @@ const log = new ExecutionLogger($CHANGE_NAME);  // Use Change Name as log scope
 
 **Rationale:** S2 supports a universal generic task range from easy to advanced levels. We must dynamically select the right OpenSpec workflow based on whether we have a DRR and the complexity of the task.
 
-- **Check `$HAS_DRR` AND Task Complexity:**
-  - **Path A (Simple Task, No DRR):** If `$HAS_DRR=false` AND the description represents a straightforward, quick feature or bug fix:
-    - **Trigger:** Invoke `/opsx:ff $CHANGE_NAME`
-    - **Context:** Pass the original `$ARGUMENTS` description. `/opsx:ff` handles basic artifact generation.
-  - **Path B (Advanced Task, or Has DRR):** If `$HAS_DRR=true` OR the description represents a complex feature needing complete specs, design, and explicit explicit control:
-    - **Trigger:** Invoke `/opsx:ff $CHANGE_NAME`
-    - **Context:** If `$HAS_DRR=false`, pass the generic description as context to help `ff`. If `$HAS_DRR=true`, use `context: same_task`.
+- **Trigger:** Invoke `/opsx:ff $CHANGE_NAME`
+  - If `$HAS_DRR=true`: `/opsx:ff` will use the DRR constraints as context automatically.
+  - If `$HAS_DRR=false`: pass the original `$ARGUMENTS` description as context when `/opsx:ff` prompts for it.
 - **Handling Pauses:** If `/opsx:ff` pauses to ask a question (e.g., "What change do you want to work on?"), DO NOT stop to ask the user. Autonomously answer the question using the context from the DRR constraints or the original generic description.
 
 > 🚨 **CRITICAL — DO NOT STOP HERE:**
@@ -185,10 +190,6 @@ const log = new ExecutionLogger($CHANGE_NAME);  // Use Change Name as log scope
 - **Pass Criteria:** All C-* constraints verified with evidence
 ```
 
-### STATE 4: (RESERVED FOR FUTURE USE)
-
-> **Note:** STATE 4 is reserved for future extensibility. Current workflow jumps STATE 3 → STATE 5 directly.
-
 ### STATE 3: VERIFICATION & RETRY LOOP
 
 > **LOG:** `log.startPhase('S3', 's2-openspec')`
@@ -236,7 +237,7 @@ const log = new ExecutionLogger($CHANGE_NAME);  // Use Change Name as log scope
 > **LOG:** `log.startPhase('S5', 's2-openspec')`
 
 **Action:** Refactor for clarity and maintainability.
-- **Pre-Check:** Attempt to invoke `Task` tool with `subagent_type="code-simplifier"`.
+- **Pre-Check:** Attempt to invoke `Agent` tool with `subagent_type="code-simplifier:code-simplifier"`.
 - **Log:** "Attempting code simplification..."
 - **Context:** "Simplify and refine code from the recently completed implementation. Focus on: removing redundancy, improving naming, reducing nesting, extracting meaningful functions, and enhancing readability. Preserve ALL verified behavior."
 - **Result Analysis:**
@@ -340,13 +341,13 @@ const log = new ExecutionLogger($CHANGE_NAME);  // Use Change Name as log scope
 
 **Installation (if desired):**
 ```bash
-# Install plugin yang menyediakan code-simplifier subagent
-# (Tergantung package manager/plugin registry yang digunakan)
+# Install the plugin that provides the code-simplifier subagent
+# (depends on the package manager/plugin registry in use)
 ```
 
-**Fallback Manual:** Jika plugin tidak tersedia, user dapat menjalankan refactoring manual setelah archive dengan:
+**Manual Fallback:** If the plugin is unavailable, run refactoring manually after archive:
 ```
-Task: subagent_type="code-simplifier" atau manual code review.
+Task: subagent_type="code-simplifier" or manual code review.
 ```
 
 ---

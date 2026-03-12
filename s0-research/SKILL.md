@@ -1,12 +1,14 @@
 ---
 name: s0-research
-description: Structured research orchestrator. Combines offline research (grepai + serena + quint FPF reasoning) with online research (surf aimode — the SOLE online research tool) to produce a verified, hallucination-resistant Context Pack. Use before S1-Quint for complex problems, or standalone for deep technical research. Final output is printed in full to terminal AND written to file.
+description: Structured research orchestrator. Combines offline research (grepai + serena + quint FPF reasoning) with online research (surf aimode — the SOLE online research tool) to produce a verified, hallucination-resistant Context Pack. Use before S1-Quint for complex problems, or standalone for deep technical research. Full output written to .quint/context.md; Summary Card always printed to terminal.
 input: <research_question_or_problem_statement>
 allowed-tools:
   - Bash
   - Read
+  - Write
   - Grep
   - Glob
+  - WebFetch
   - mcp__quint-code__quint_status
   - mcp__quint-code__quint_init
   - mcp__quint-code__quint_record_context
@@ -36,18 +38,19 @@ allowed-tools:
 > **DO NOT write code. DO NOT edit source files.**
 > Your ONLY output is a **verified Context Pack** (knowledge artifact).
 
-> **NO CODE / NO SNIPPETS IN REPORTS.**
+> **FINDINGS OVER CODE IN REPORTS.**
 > Research output describes **algorithms, logic flows, data shapes, and decision rationale** in prose and structured text.
-> Showing code snippets, implementation blocks, or raw source excerpts in the final report is **FORBIDDEN**.
-> Exception: short inline identifiers (function name, field name) are allowed inside table cells or bullet points — NOT as fenced code blocks.
-> **Algorithm clarity > code familiarity.** If you must explain how something works, describe the steps in plain language.
+> Avoid dumping raw source code blocks — they add noise without insight. Describe what the code *does*, not what it *says*.
+> Exception: short inline identifiers (function name, field name, a signature line) are fine inside table cells or bullet points when they sharpen precision.
+> **Algorithm clarity > code familiarity.** If you must explain how something works, use numbered step sequences, not fenced blocks.
 
-> **TERMINAL FIRST, FILE SECOND — BOTH ARE MANDATORY.**
-> Every final output section (Context Pack, Research Report, Summary) MUST be:
-> 1. **Printed in full to the terminal** — complete, untruncated, copy-paste ready.
-> 2. **Written to the corresponding output file** (see R4, R5 for paths).
-> Printing only a "summary" or "see file X" is a CRITICAL FAILURE.
-> The user must be able to copy the entire report directly from the terminal.
+> **FILE IS PRIMARY — TERMINAL SHOWS SUMMARY.**
+> Every final output section MUST be:
+> 1. **Written in full to the corresponding output file** (`.quint/context.md`, `.quint/research_report.md`).
+> 2. **Summarized to the terminal** — key findings, hypothesis winner, open questions, and the file path.
+> For large context packs (>200 lines), printing the full body floods the terminal and obscures the signal. Write to file, surface the digest.
+> Saying "see file X" without printing AT LEAST the Summary Card + section headings is a failure.
+> The user must be able to see what was found without opening a file.
 
 **Research Question:** "$ARGUMENTS"
 
@@ -161,7 +164,7 @@ serena.search_for_pattern "<pattern>" --relative_path "<scope>"
 
 After R1.1-R1.4, compile structured findings:
 
-> **PATH RULE:** ALL file references MUST use absolute paths (e.g., `D:\WORKSPACE\project\src\module.py:42`), never relative snippets or basenames.
+> **PATH RULE:** ALL file references MUST use absolute paths (e.g., `E:\clipper\aiclip\core\module.py:42`), never relative snippets or basenames.
 
 ```markdown
 ## Offline Findings (Repo Truth)
@@ -169,7 +172,7 @@ After R1.1-R1.4, compile structured findings:
 ### Entrypoints
 | Symbol | Full Path | Line | Role |
 |--------|-----------|------|------|
-| example_func | D:\WORKSPACE\project\src\main.py | 42 | Entry point for X |
+| example_func | E:\clipper\aiclip\core\example.py | 42 | Entry point for X |
 
 ### Key Data Structures
 | Name | Full Path | Line | Shape |
@@ -419,9 +422,12 @@ Any `OPEN` assumption = Research Incomplete. Return to R1 or R2.
 ### R4.2 — Generate Context Pack
 
 > **OUTPUT MANDATE:**
-> 1. Print the ENTIRE Context Pack content to the terminal (no truncation, no "see file").
-> 2. Write the same content to `.quint/context.md`.
-> Both steps are REQUIRED. Skipping either is a failure.
+> 1. Write the full Context Pack content to `.quint/context.md` — always required.
+> 2. Terminal output depends on pack size:
+>    - **≤200 lines:** Print the ENTIRE Context Pack to the terminal.
+>    - **>200 lines:** Print the Summary Card + all section headings + key findings. Full body is in the file. Flooding the terminal with hundreds of table rows obscures the signal — the file is authoritative.
+> 3. Saying "see file X" without printing AT LEAST the Summary Card + section headings is a failure.
+> Both file write and terminal summary are REQUIRED. Skipping either is a failure.
 
 Content to print AND write to `.quint/context.md`:
 
@@ -504,7 +510,28 @@ Research Scope: "$ARGUMENTS"
 
 ---
 
-## 7. Test Contract (if applicable)
+## 7. Negative Constraints (Anti-Patterns)
+
+> These are as important as the positive findings. Explicitly telling the implementer what NOT to do prevents hallucinated convenience methods and known-bad patterns.
+
+- NC-1: Do NOT use `<library/method>` — reason: `<deprecation/incompatibility/security>`
+- NC-2: Do NOT assume `<env/service>` is available — must check: `<how>`
+- NC-3: Avoid pattern `<X>` — use `<Y>` instead because: `<reason>`
+
+---
+
+## 8. Grounding Snippets
+
+> Verbatim, minimal code blocks from the codebase or official docs that anchor the implementation. Providing exact source material reduces the implementer's urge to "guess" logic.
+
+```python
+# Snippet: <what this shows> — Source: <file:line or url>
+<verbatim code, max 10-15 lines>
+```
+
+---
+
+## 9. Test Contract (if applicable)
 
 ### Required Evidence for S1/S2
 - [ ] Unit tests: <specific functions>
@@ -527,25 +554,24 @@ Research Scope: "$ARGUMENTS"
 ### R5.1 — Research Report (Full Terminal Output + File Write)
 
 > **MANDATORY SEQUENCE — NO SHORTCUTS:**
-> 1. **Print the FULL Context Pack** (from R4.2) to the terminal — every section, every table, every finding. No truncation. No "see file".
-> 2. **Print the Summary Card** (below) to the terminal.
-> 3. **Write both** to `.quint/research_report.md`.
-> 4. Confirm: "Full report printed above and saved to `.quint/research_report.md`."
+> 1. **Write the full Context Pack** (from R4.2) to `.quint/context.md`.
+> 2. **Print the Summary Card** (below) to the terminal — always required.
+> 3. **Print section headings + key findings** to terminal (for large packs, skip the full table bodies — they're in the file).
+> 4. **Write the full report** to `.quint/research_report.md`.
+> 5. Confirm: "Context Pack saved to `.quint/context.md`. Full report saved to `.quint/research_report.md`."
 >
 > **CRITICAL FAILURES (will be rejected):**
-> - Printing only the summary card without the full Context Pack.
-> - Saying "see .quint/context.md for details" instead of printing.
-> - Using snippet paths (`src/main.py`) instead of absolute paths (`D:\WORKSPACE\project\src\main.py`).
-> - Omitting findings to save space.
+> - Printing zero terminal output — the Summary Card is always required.
+> - Using snippet paths (`src/main.py`) instead of absolute paths (`E:\clipper\aiclip\core\module.py:42`).
+> - Omitting key findings from the Summary Card.
 >
 > **REPORT CONTENT RULES:**
-> - Describe every finding, hypothesis, contradiction, and resolution in full.
-> - Use structured prose, tables, and numbered lists. **No fenced code blocks.**
-> - ALL file paths MUST be absolute (e.g., `D:\WORKSPACE\project\src\module.py:42`).
-> - For algorithmic descriptions, use numbered step sequences (1. … 2. … 3. …), NOT code.
-> - Be exhaustive — omitting findings to save space is a failure.
+> - Describe every finding, hypothesis, contradiction, and resolution in full (in the file).
+> - Use structured prose, tables, and numbered lists. Avoid raw fenced code dumps.
+> - ALL file paths MUST be absolute.
+> - For algorithmic descriptions, use numbered step sequences (1. … 2. … 3. …), not fenced blocks.
 
-**Step 1: Print the full Context Pack content (from R4.2) here — untruncated.**
+**Step 1: Write the full Context Pack content (from R4.2) to `.quint/context.md`.**
 
 **Step 2: Then print the Summary Card:**
 
@@ -578,8 +604,9 @@ Research Scope: "$ARGUMENTS"
 ║   → OR review .quint/context.md directly             ║
 ╚══════════════════════════════════════════════════════╝
 
-**Step 3: Write the combined output (Context Pack + Summary Card) to `.quint/research_report.md`.**
-**Step 4: Confirm: "Full report printed above and saved to `.quint/research_report.md`."**
+**Step 2: Print the Summary Card above to terminal.**
+**Step 3: Write the full Context Pack + Summary Card to `.quint/research_report.md`.**
+**Step 4: Confirm: "Context Pack saved to `.quint/context.md`. Full report saved to `.quint/research_report.md`."**
 
 ### R5.2 — Handoff Modes
 

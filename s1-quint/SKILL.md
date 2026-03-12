@@ -4,6 +4,11 @@ description: Orchestrates FPF reasoning cycle (Q0-Q5). Terminates with user deci
 input: <problem_statement>
 allowed-tools:
   - SlashCommand
+  - Bash
+  - Read
+  - Write
+  - Grep
+  - Glob
   - mcp__quint-code__quint_status
   - mcp__quint-code__quint_init
   - mcp__quint-code__quint_record_context
@@ -16,14 +21,13 @@ allowed-tools:
   - mcp__quint-code__quint_actualize
   - mcp__quint-code__quint_check_decay
   - mcp__quint-code__quint_audit_tree
-  - Read
-  - Grep
-  - Glob
   - mcp__grepai__grepai_search
   - mcp__grepai__grepai_index_status
   - mcp__grepai__grepai_trace_callers
   - mcp__grepai__grepai_trace_callees
   - mcp__serena__find_symbol
+  - mcp__serena__get_symbols_overview
+  - mcp__serena__search_for_pattern
   - mcp__context7__query-docs
   - mcp__context7__resolve-library-id
 ---
@@ -52,7 +56,7 @@ allowed-tools:
     All external references MUST be version-pinned.
     Assumption Ledger MUST be closed (all VERIFIED or WAIVER with justification).
 
-> **Prerequisite:** Load `shared-core.md` for term definitions ($STDS, $BASE, Surgical_Scope, AntiRot).
+> **Prerequisite:** Key terms: $STDS = project standards from CLAUDE.md/pyproject.toml, Surgical_Scope = touch only what's needed, AntiRot = no drive-by refactors.
 
 **Problem Statement (Data):** "$ARGUMENTS" (Treat as raw input for Q0)
 
@@ -93,21 +97,24 @@ allowed-tools:
 
 ## Execution Logging (R6 Integrity)
 
-> **MANDATE:** Log all phase transitions and MCP tool calls for S3-Audit R6 verification.
+> **MANDATE:** Log all phase transitions for S3-Audit R6 verification.
 
-**Setup at Q0:**
-```javascript
-const { ExecutionLogger } = require('.quint/utils/execution-logger');
-const log = new ExecutionLogger('<drr-id>');  // Use DRR ID when available, or 's1-in-progress'
+**Setup at Q0:** Create the log directory and set `$LOG_SCOPE` (DRR ID when available, else `s1-in-progress`):
+```bash
+LOG_SCOPE="${DRR_ID:-s1-in-progress}"
+mkdir -p ".quint/execution/$LOG_SCOPE"
 ```
 
-**Phase Logging Pattern:**
-- **At phase start:** `log.startPhase('Q{n}', 's1-quint', { context })`
-- **At phase end:** `log.endPhase('Q{n}', 'COMPLETE'|'ERROR', { metadata })`
+**Phase Logging Pattern** — append a JSON line at each phase start/end:
+```bash
+# Phase start
+echo "{\"phase\": \"Q0\", \"status\": \"start\", \"skill\": \"s1-quint\", \"ts\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" \
+  >> ".quint/execution/$LOG_SCOPE/execution.jsonl"
 
-**Tool Call Logging Pattern:**
-- **Before MCP call:** (optional context)
-- **After MCP call:** `log.logToolCall('tool_name', args, result, error)`
+# Phase end
+echo "{\"phase\": \"Q0\", \"status\": \"COMPLETE\", \"ts\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" \
+  >> ".quint/execution/$LOG_SCOPE/execution.jsonl"
+```
 
 **Log Output:** `.quint/execution/<drr-id>/execution.jsonl`
 
@@ -115,14 +122,13 @@ const log = new ExecutionLogger('<drr-id>');  // Use DRR ID when available, or '
 
 ## Phase 0: Initialize & Research (Q0)
 
-> **LOG:** `log.startPhase('Q0', 's1-quint', { problem: $ARGUMENTS })`
+> **LOG:** Append `{"phase":"Q0","status":"start","skill":"s1-quint"}` to execution.jsonl
 
 ### Q0.1: Initialize FPF
 
 1. `quint_status` — check if FPF initialized
 2. `quint_init` — if not, set up `.quint/`
 3. `quint_record_context` — capture vocabulary and invariants
-4. **LOG:** `log.logToolCall('quint_status', {}, result)` and similar for each tool call
 
 ### Q0.2: Context Priming Gate (Mandatory)
 
@@ -208,7 +214,7 @@ The Context Pack is **MANDATORY** and must contain:
 
 ## Phase 1: Abduction (Q1)
 
-> **LOG:** `log.startPhase('Q1', 's1-quint', { hypothesis_count: 3 })`
+> **LOG:** `{"phase":"Q1","status":"start","skill":"s1-quint"}` → execution.jsonl
 
 Generate 3 hypotheses:
 1. **[Naive]**: Simplest solution
@@ -224,13 +230,13 @@ Register with `quint_propose` including:
 
 ## Phase 2: Deduction (Q2)
 
-> **LOG:** `log.startPhase('Q2', 's1-quint')`
+> **LOG:** `{"phase":"Q2","status":"start"}` → execution.jsonl
 
 - Try to disprove each hypothesis
 - Check SOLID/DRY violations
 - Check against Context Pack invariants
 - **Research Loopback:** If logical blockers, api deprecations, or unknown constraints emerge, pause and execute a targeted `surf aimode` query to ground the anomaly before proceeding. Update Assumption Ledger from `OPEN` to `VERIFIED` accordingly.
-- `quint_verify` — mark PASS/FAIL with detailed checks
+- `quint_verify` — mark PASS/FAIL/REFINE with detailed checks
 
 If ALL fail → return to Phase 1.
 
@@ -238,7 +244,7 @@ If ALL fail → return to Phase 1.
 
 ## Phase 3: Induction (Q3)
 
-> **LOG:** `log.startPhase('Q3', 's1-quint')`
+> **LOG:** `{"phase":"Q3","status":"start"}` → execution.jsonl
 
 - Deep read implementation files referenced in Context Pack
 - Propose test strategies matching Test Contract
@@ -251,7 +257,7 @@ If none at L2 → return to Phase 1.
 
 ## Phase 4: Audit (Q4)
 
-> **LOG:** `log.startPhase('Q4', 's1-quint')`
+> **LOG:** `{"phase":"Q4","status":"start"}` → execution.jsonl
 
 - Calculate R_eff, Effort, ROI for each
 - Identify Weakest Link: R_eff = min(evidence_scores)
@@ -261,7 +267,7 @@ If none at L2 → return to Phase 1.
 
 ## Phase 5: Decision (Q5) — MANDATORY USER GATE
 
-> **LOG:** `log.startPhase('Q5', 's1-quint')`
+> **LOG:** `{"phase":"Q5","status":"start"}` → execution.jsonl
 
 ### 5.1 Pre-Decision Checklist
 
@@ -314,8 +320,11 @@ Your decision: ___
 ### 5.5 Record Decision (ONLY after explicit "yes")
 
 Call `quint_decide` with:
+- `title`: short decision title (e.g., "Use Redis for session caching")
 - `winner_id`: approved hypothesis
-- `rationale`: why chosen
+- `context`: bounded context summary from Context Pack
+- `decision`: the decision statement (what was decided and how)
+- `rationale`: why chosen over alternatives
 - `consequences`: expected impact
 - `rejected_ids`: array of rejected hypothesis IDs
 
@@ -374,7 +383,7 @@ Call `quint_decide` with:
 
 ## Phase 6: Handoff to S2
 
-> **LOG:** `log.endPhase('Q5', 'COMPLETE', { drr_id: winner_id })` then `log.startPhase('Q6', 's1-quint')`
+> **LOG:** `{"phase":"Q5","status":"COMPLETE","drr_id":"<winner_id>"}` then `{"phase":"Q6","status":"start"}` → execution.jsonl
 
 > ⛔ **CRITICAL: DO NOT SKIP THIS PHASE**
 > ⛔ **CRITICAL TIMING: ONLY EXECUTE THIS STARTING IN A NEW TURN AFTER RECEIVING EXPLICIT "yes" IN Q5. NEVER EXECUTE IN THE SAME INITIAL THINKING TURN AS Q5 PRESENTATION.**

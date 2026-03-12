@@ -4,11 +4,11 @@ description: Forensic Quality Gate (Post-Mortem). Pipeline verifier - validates 
 input: <audit_target_drr_id>
 allowed-tools:
   - Read
+  - Write
   - Grep
   - Glob
   - SlashCommand
   - mcp__quint-code__quint_status
-  - Bash(git status)
   - Bash
 ---
 
@@ -16,7 +16,7 @@ allowed-tools:
 
 > **Persona:** Thorough Reviewer
 > **Pipeline:** `s1-quint` (Strategy) -> `s2-openspec` (Execution) -> `s3-audit` (Review)
-> **Mandate:** FIND issues. Document warnings. Archive ALWAYS proceeds.
+> **Mandate:** FIND issues. Apply tiered response: BLOCK critical failures, ESCALATE significant drift, WARN on advisory issues.
 
 **Target DRR:** $ARGUMENTS
 
@@ -24,11 +24,17 @@ allowed-tools:
 
 ## Review Mandate
 
-You are a quality reviewer. Your job is to FIND issues and document them as **warnings**.
-Document findings thoroughly, but **NEVER block the archive process**.
-All findings are advisory — the archive always proceeds.
+You are a quality reviewer operating a **tiered quality gate**. Your job is to find issues and respond proportionally:
+
+| Response | When | Effect |
+|----------|------|--------|
+| **BLOCK** | R5 critical failure (missing/failed verification evidence) | Archive halted. Must re-verify with PASS status before proceeding. |
+| **ESCALATE** | R4 scope drift >25% | Archive halted. Human review and explicit override required. |
+| **WARN** | All other rule violations | Advisory. Archive proceeds. Noted for improvement. |
 
 **Evidence Standard:** Every claim in the audit must cite specific file paths and line numbers.
+
+> **Why tiered?** An audit gate that only warns is a notification system, not a control. Missing verification evidence means the feature effectively does not exist in a compliant state — approving it creates "phantom compliance." Failed tests promoted to production create immediate technical debt and potential liability.
 
 ---
 
@@ -130,10 +136,10 @@ Scope Drift % = (Out-of-Scope Files / Total Modified Files) × 100
 | Drift % | Status | Action |
 |---------|--------|--------|
 | 0-10% | PASS | Minor drift, acceptable |
-| 10-25% | WARN | Excessive drift, note in report |
-| >25% | WARN (HIGH) | Significant scope drift, highlight in report |
+| 10-25% | WARN | Excessive drift, note in report. Archive proceeds. |
+| >25% | **ESCALATE** | Archive **halted**. Human review required. Cannot proceed without explicit override. |
 
-**WARN IF:**
+**WARN / ESCALATE IF:**
 - >10% of modified files are outside DRR scope declaration
 - Unrequested changes in unrelated modules
 - Drive-by refactoring not in spec
@@ -156,14 +162,14 @@ Scope Drift % = (Out-of-Scope Files / Total Modified Files) × 100
 
 ### R5: Verification Evidence Presence and PASS Status
 
-**WARN IF:**
+**BLOCK IF (critical — archive halted):**
 - `verification_result.json` missing
 - `verify.log` missing
 - `verification_result.json` contains `"status": "FAIL"`
 - Test failures exist in verification logs
 - Archive executed without PASS evidence
 
-**Note:** Missing evidence is a warning, not a blocker. Archive always proceeds.
+**This rule is NEVER waivable.** Missing or failed verification evidence means the implementation has not been confirmed to work. Archive cannot proceed until re-verification produces a PASS status.
 
 **VERIFICATION:**
 1. Verify file exists: `openspec/changes/<id>/verification_result.json`
@@ -175,7 +181,7 @@ Scope Drift % = (Out-of-Scope Files / Total Modified Files) × 100
 **EVIDENCE STRUCTURE CHECK:**
 ```json
 {
-  "drr_id": "<must match audit target>",
+  "change_name": "<must match $CHANGE_NAME from S2>",
   "timestamp": "<ISO 8601>",
   "status": "PASS",  // MUST be PASS
   "tests": {
@@ -224,6 +230,68 @@ logEntries
 
 ---
 
+### R7: Supply Chain Integrity (AI-Specific)
+
+**WARN IF:**
+- Any new dependency added during this change does not exist in the official package registry
+- New package has unusually low download counts / recent registration date (slopsquatting risk)
+- Import paths reference package names not present in `requirements.txt` / `package.json` / `pyproject.toml`
+
+**Why:** LLMs frequently hallucinate package names. Attackers pre-register these names with malicious code ("slopsquatting"). A new dependency that wasn't in the requirements before this change must be verified as real and intentional.
+
+**VERIFICATION:**
+1. Run `git diff` on `requirements.txt` / `package.json` / `pyproject.toml` to find newly added packages
+2. For each new package, verify it exists in the registry (PyPI, npm, etc.)
+3. Flag packages with unusually generic or convenience names (e.g., `fast-json-parser-v2`, `requests-helper`)
+
+---
+
+### R8: License Contamination (AI-Specific)
+
+**WARN IF:**
+- New code blocks match patterns from GPL/AGPL-licensed libraries
+- Verbatim code was likely memorized and regurgitated from an open-source copyleft project
+- No license header or provenance comment for substantially copied code blocks
+
+**Why:** AI models may reproduce memorized GPL/AGPL code into proprietary codebases, inadvertently triggering copyleft obligations. This is an IP risk that standard linters miss.
+
+**VERIFICATION:**
+1. Review any new utility functions or algorithm implementations — are these novel or suspiciously "textbook perfect"?
+2. Flag large (>20 lines) new code blocks that implement standard algorithms without attribution
+3. Suggest running a snippet-matching tool (Black Duck, FOSSA) on the change if risk is detected
+
+---
+
+### R9: Context Boundary Failures (AI-Specific)
+
+**WARN IF:**
+- Security constraints or auth checks declared early in the development conversation are absent from implementation
+- Functions that should check permissions/roles have no auth guard
+- Input validation specified in the DRR is missing from boundary functions
+
+**Why:** LLMs have limited context windows. Security invariants stated at conversation start (e.g., "ensure user is admin") are frequently "forgotten" by the time the relevant function is generated 50+ turns later.
+
+**VERIFICATION:**
+1. Read DRR Constraints Bundle — identify any C-* constraints related to auth, permissions, or input validation
+2. Find the implementing functions in the diff
+3. Verify each security constraint traces to a concrete check in the code
+
+---
+
+### R10: Prompt Residue & Hardcoded Secrets (AI-Specific)
+
+**WARN IF:**
+- Hardcoded placeholder secrets appear in code (`API_KEY="sk-..."`, `password="test123"`)
+- LLM response artifacts are present (e.g., `# As an AI, I cannot...`, `# TODO: implement this`)
+- High-entropy strings appear in source code that look like secrets/tokens
+
+**VERIFICATION:**
+1. Grep changed files for: `sk-`, `password=`, `secret=`, `token=`, `api_key=`
+2. Grep for LLM response phrases: `As an AI`, `I cannot`, `placeholder`, `TODO: implement`
+3. Grep for common placeholder patterns: `your_key_here`, `xxxx`, `1234`
+
+---
+
 ## Audit Execution Flow
 
 ```
@@ -237,21 +305,27 @@ START
 └────────┬────────┘
          │
          ▼
-┌─────────────────┐
-│ Execute R1      │ ← Pinned references check
-│ Execute R2      │ ← Assumption ledger + implicit detection
-│ Execute R3      │ ← Constraint drift via diff
-│ Execute R4      │ ← Scope drift calculation
-│ Execute R5      │ ← Verification evidence check
-│ Execute R6      │ ← Execution integrity check
-└────────┬────────┘
+┌──────────────────────────────────────────┐
+│ Execute R1  ← Pinned references (WARN)   │
+│ Execute R2  ← Assumption ledger (WARN)   │
+│ Execute R3  ← Constraint drift (WARN)    │
+│ Execute R4  ← Scope drift (WARN/>25%=ESC)│
+│ Execute R5  ← Verification (BLOCK)       │
+│ Execute R6  ← Execution integrity (WARN) │
+│ Execute R7  ← Supply chain (WARN)        │
+│ Execute R8  ← License contamination(WARN)│
+│ Execute R9  ← Context boundaries (WARN)  │
+│ Execute R10 ← Prompt residue (WARN)      │
+└────────┬─────────────────────────────────┘
          │
          ▼
-┌─────────────────────────┐
-│ ALWAYS APPROVED         │
-│ Collect warnings        │
-│ Generate verdict        │
-└────────┬────────────────┘
+┌───────────────────────────────────────────────────┐
+│ Determine verdict                                  │
+│  • R5 FAIL?         → BLOCKED (archive halted)    │
+│  • R4 drift >25%?   → ESCALATE (human required)   │
+│  • Warnings only?   → APPROVED_WITH_WARNINGS       │
+│  • All pass?        → APPROVED                     │
+└────────┬──────────────────────────────────────────┘
          │
          ▼
 ┌─────────────────────────┐
@@ -273,13 +347,13 @@ START
 
 **Date:** <ISO_TIMESTAMP>
 **Auditor:** s3-audit (Zero Trust Gate)
-**Status:** [APPROVED | APPROVED_WITH_WARNINGS]
+**Status:** [APPROVED | APPROVED_WITH_WARNINGS | ESCALATE | BLOCKED]
 
 ## Executive Summary
 
 - **Rule Violations:** <count>
 - **Critical Issues:** <count>
-- **Recommendation:** [PROCEED | PROCEED_NOTE_WARNINGS]
+- **Recommendation:** [PROCEED | PROCEED_NOTE_WARNINGS | HUMAN_REVIEW_REQUIRED | BLOCKED_RE_VERIFY]
 
 ## Traceability Matrix
 
@@ -288,9 +362,13 @@ START
 | R1 | Pinned References | [PASS/WARN] | `<file>:<line> "<citation>"` |
 | R2 | Assumption Ledger | [PASS/WARN] | `<count> OPEN, <count> implicit found` |
 | R3 | Constraint Drift | [PASS/WARN] | `<diff_summary>` |
-| R4 | Scope Drift | [PASS/WARN] | `<pct>% (<out>/<total> files)` |
-| R5 | Verification Evidence | [PASS/WARN] | `<verify.json status>` |
+| R4 | Scope Drift | [PASS/WARN/ESCALATE] | `<pct>% (<out>/<total> files)` |
+| R5 | Verification Evidence | [PASS/BLOCK] | `<verify.json status>` |
 | R6 | Execution Integrity | [PASS/WARN] | `<execution.jsonl findings>` |
+| R7 | Supply Chain | [PASS/WARN] | `<new packages checked>` |
+| R8 | License Contamination | [PASS/WARN] | `<new code blocks reviewed>` |
+| R9 | Context Boundaries | [PASS/WARN] | `<security constraints verified>` |
+| R10 | Prompt Residue | [PASS/WARN] | `<patterns scanned>` |
 
 ## Detailed Findings
 
@@ -405,14 +483,18 @@ All warnings are advisory. Archive has proceeded.
   "audit_id": "<uuid>",
   "drr_id": "$ARGUMENTS",
   "timestamp": "<ISO_8601>",
-  "status": "APPROVED",
+  "status": "APPROVED | APPROVED_WITH_WARNINGS | ESCALATE | BLOCKED",
   "rules": {
     "R1": { "status": "PASS|WARN", "evidence": "..." },
     "R2": { "status": "PASS|WARN", "evidence": "..." },
     "R3": { "status": "PASS|WARN", "evidence": "..." },
-    "R4": { "status": "PASS|WARN", "drift_pct": 0.0, "evidence": "..." },
-    "R5": { "status": "PASS|WARN", "evidence": "..." },
-    "R6": { "status": "PASS|WARN", "phases_complete": true, "tool_errors": 0, "evidence": "..." }
+    "R4": { "status": "PASS|WARN|ESCALATE", "drift_pct": 0.0, "evidence": "..." },
+    "R5": { "status": "PASS|BLOCK", "evidence": "..." },
+    "R6": { "status": "PASS|WARN", "phases_complete": true, "tool_errors": 0, "evidence": "..." },
+    "R7": { "status": "PASS|WARN", "new_packages_checked": 0, "evidence": "..." },
+    "R8": { "status": "PASS|WARN", "new_code_blocks_reviewed": 0, "evidence": "..." },
+    "R9": { "status": "PASS|WARN", "security_constraints_verified": 0, "evidence": "..." },
+    "R10": { "status": "PASS|WARN", "patterns_scanned": [], "evidence": "..." }
   },
   "warnings": [
     {
@@ -427,7 +509,7 @@ All warnings are advisory. Archive has proceeded.
     "high_count": 0,
     "medium_count": 0,
     "low_count": 0,
-    "recommendation": "PROCEED"
+    "recommendation": "PROCEED | PROCEED_NOTE_WARNINGS | HUMAN_REVIEW_REQUIRED | BLOCKED_RE_VERIFY"
   }
 }
 ```
@@ -436,31 +518,35 @@ All warnings are advisory. Archive has proceeded.
 
 ## Finding Handling
 
-All findings are **warnings only**. Archive always proceeds.
-
-| Condition | Action |
-|-----------|--------|
-| R1 WARN | Note: Suggest version pinning for next cycle |
-| R2 WARN (OPEN items) | Note: Suggest closing assumptions |
-| R2 WARN (implicit found) | Note: Suggest documenting in Assumption Ledger |
-| R3 WARN | Note: Suggest reconciling constraints next time |
-| R4 >10% drift | Note: Flag scope drift in report |
-| R4 >25% drift | Note: Highlight significant scope drift |
-| R5 WARN | Note: Suggest adding verification evidence next time |
-| R6 WARN (phase skip) | Note: Flag phase skip for investigation |
-| R6 WARN (tool failure) | Note: Report tool failure for debugging |
-| >3 warnings | Note: Highlight process improvement opportunities |
+| Condition | Response | Effect |
+|-----------|----------|--------|
+| R1 WARN | Advisory | Suggest version pinning for next cycle. Archive proceeds. |
+| R2 WARN (OPEN items) | Advisory | Suggest closing assumptions. Archive proceeds. |
+| R2 WARN (implicit found) | Advisory | Suggest documenting in Assumption Ledger. Archive proceeds. |
+| R3 WARN | Advisory | Suggest reconciling constraints next time. Archive proceeds. |
+| R4 10-25% drift | WARN | Flag scope drift in report. Archive proceeds. |
+| R4 >25% drift | **ESCALATE** | **Archive halted.** Human review required. Cannot proceed without explicit override. |
+| R5 missing/failed evidence | **BLOCK** | **Archive halted.** Must re-run `/opsx:verify` and achieve PASS status. |
+| R6 WARN (phase skip) | Advisory | Flag phase skip for investigation. Archive proceeds. |
+| R6 WARN (tool failure) | Advisory | Report tool failure for debugging. Archive proceeds. |
+| R7 WARN (suspect package) | Advisory | Flag for manual dependency verification. Archive proceeds. |
+| R8 WARN (license risk) | Advisory | Flag for IP review. Archive proceeds. |
+| R9 WARN (missing auth) | Advisory | Flag for security review. Archive proceeds. |
+| R10 WARN (prompt residue) | Advisory | Must remove hardcoded secrets before merging. Archive proceeds if non-secret. |
+| >3 warnings | Advisory | Highlight process improvement opportunities. |
 
 ---
 
 ## Completion
 
-**S3 ALWAYS terminates after producing artifacts.** It does not wait for user input.
+**S3 terminates after producing artifacts.** It does not wait for user input.
 
 **Output:**
 - `audit_verdict.md`
 - `verdict.json`
 
-**User reviews verdict independently. Verdict is always APPROVED.**
-- **APPROVED** → No warnings found, proceed
-- **APPROVED_WITH_WARNINGS** → Warnings noted for future improvement, archive proceeded
+**Verdict values:**
+- **APPROVED** → All rules pass. Proceed.
+- **APPROVED_WITH_WARNINGS** → Advisory issues found, noted for improvement. Archive proceeded.
+- **ESCALATE** → R4 scope drift >25%. Archive halted. Human review required before proceeding.
+- **BLOCKED** → R5 verification evidence missing or failed. Archive halted. Re-verify and achieve PASS.

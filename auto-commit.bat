@@ -58,10 +58,15 @@ if %CHANGES% equ 0 (
 echo [INFO] Found %CHANGES% changed file(s).
 git status --short
 
-REM Get commit message
+REM Get commit message (default: timestamp-based auto message)
 if "%~1"=="" (
-    set /p MSG="Enter commit message: "
-    if "!MSG!"=="" set MSG=chore: update files
+    for /f "tokens=1-4 delims=/ " %%a in ('date /t') do (
+        set DATED=%%a%%b%%c
+    )
+    for /f "tokens=1-2 delims=: " %%a in ('time /t') do (
+        set TIMED=%%a%%b
+    )
+    set MSG=chore: auto-sync %DATED%-%TIMED%
 ) else (
     set MSG=%~1
 )
